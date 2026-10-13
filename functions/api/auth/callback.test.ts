@@ -25,8 +25,31 @@ describe("OAuth callback failures", () => {
       env,
     } as any);
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/en/account?auth=failed");
+    expect(res.headers.get("location")).toBe("/en/account?auth=failed&reason=state");
     expect(res.headers.get("set-cookie")).toContain("oauth_state=;");
+  });
+
+  it("tags a state mismatch with reason=state", async () => {
+    const res = await onRequestGet({
+      request: new Request("https://skein.test/api/auth/callback?code=x&state=wrong", {
+        headers: { Cookie: `oauth_state=${await signedState("ru")}` },
+      }),
+      env,
+    } as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/ru/account?auth=failed&reason=state");
+  });
+
+  it("tags a stale terms version with reason=terms", async () => {
+    const signed = await signValue("some-uuid|en|account|v0", "secret");
+    const res = await onRequestGet({
+      request: new Request("https://skein.test/api/auth/callback?code=x&state=some-uuid", {
+        headers: { Cookie: `oauth_state=${signed}` },
+      }),
+      env,
+    } as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/en/account?auth=failed&reason=terms");
   });
 
   it("keeps the pre-login language from the state cookie on state mismatch", async () => {
@@ -37,7 +60,7 @@ describe("OAuth callback failures", () => {
       env,
     } as any);
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/ru/account?auth=failed");
+    expect(res.headers.get("location")).toBe("/ru/account?auth=failed&reason=state");
   });
 
   it("redirects with cancelled when GitHub reports access_denied", async () => {
@@ -66,6 +89,27 @@ describe("OAuth callback failures", () => {
       env,
     } as any);
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/en/account?auth=failed");
+    expect(res.headers.get("location")).toBe("/en/account?auth=failed&reason=exchange");
+  });
+
+  it("redirects with reason=session instead of an uncaught 500 when session creation throws", async () => {
+    const brokenEnv = { ...env, SESSIONS: { get: async () => { throw new Error("kv down"); } } } as any;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "t" }), {
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1, login: "u", avatar_url: null }), {
+        headers: { "content-type": "application/json" },
+      })));
+    const state = "some-uuid";
+    const signed = await signValue(`${state}|en|account|v1`, "secret");
+    const res = await onRequestGet({
+      request: new Request(`https://skein.test/api/auth/callback?code=ok&state=${state}`, {
+        headers: { Cookie: `oauth_state=${signed}` },
+      }),
+      env: brokenEnv,
+    } as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/en/account?auth=failed&reason=session");
   });
 });
