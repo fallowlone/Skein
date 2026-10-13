@@ -68,7 +68,14 @@ export function rowMeta(
 
 /** Algo units linked to a lesson (lesson-side block rows). */
 export function linksForLesson(index: LinkIndex, lessonKey: string, lang: Locale): UnitLink[] {
-  const hits = [...(index.lessons[lessonKey] ?? [])].sort(byRank);
+  // A lesson's "topic algorithms" block must point outward: drop the unit the
+  // lesson itself belongs to. An algo lesson listing its own unit just re-points
+  // at the page it already lives on. Mirrors linksForUnit's self-filter (the
+  // builder no longer emits self-rows, this is defence-in-depth for any index).
+  const ownUnit = lessonKey.split("/").slice(0, 2).join("/");
+  const hits = [...(index.lessons[lessonKey] ?? [])]
+    .filter((h) => h.unit !== ownUnit)
+    .sort(byRank);
   return hits.slice(0, CAP_PER_LESSON).map((h) => {
     const slug = unitSlug(h.unit);
     return {

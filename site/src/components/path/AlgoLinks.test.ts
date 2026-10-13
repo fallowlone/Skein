@@ -52,6 +52,20 @@ describe("linksForLesson", () => {
     // Two segments after learn/ (…/algorithms/<slug>/) match no route — 404.
     expect(links[0].href).toBe("/en/learn/algorithms/#unit-u-sort");
   });
+
+  it("drops the lesson's own unit (an algo lesson must not re-point at its own unit)", () => {
+    const idx = {
+      units: {},
+      lessons: {
+        "algorithms/u-a/01-x": [
+          { unit: "algorithms/u-b", shared: 2, canonical: false },
+          { unit: "algorithms/u-a", shared: 9, canonical: false },
+        ],
+      },
+    };
+    const links = linksForLesson(idx, "algorithms/u-a/01-x", "en");
+    expect(links.map((l) => l.unit)).toEqual(["algorithms/u-b"]);
+  });
 });
 
 describe("linksForUnit", () => {

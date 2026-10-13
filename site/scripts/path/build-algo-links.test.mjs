@@ -128,6 +128,39 @@ test("buildIndex returns bidirectional capped index plus coverage", () => {
   expect(coverage.withLinks).toBe(1);
 });
 
+test("buildIndex drops a unit's own lessons before the cap (cap no longer eats outward links)", () => {
+  // u-busy has 12 self lessons (shared high) + 2 outward. Pre-fix the cap-12
+  // kept the 12 self rows and both outward links were lost; the UI then dropped
+  // the self rows and the block rendered empty. Post-fix the outward pair wins.
+  const unitConcepts = { "algorithms/u-busy": { teaches: ["c1", "c2"] } };
+  const lessonConcepts = {
+    "algorithms/u-busy/01": ["c1", "c2"],
+    "algorithms/u-busy/02": ["c1", "c2"],
+    "algorithms/u-busy/03": ["c1", "c2"],
+    "algorithms/u-busy/04": ["c1", "c2"],
+    "algorithms/u-busy/05": ["c1", "c2"],
+    "algorithms/u-busy/06": ["c1", "c2"],
+    "algorithms/u-busy/07": ["c1", "c2"],
+    "algorithms/u-busy/08": ["c1", "c2"],
+    "algorithms/u-busy/09": ["c1", "c2"],
+    "algorithms/u-busy/10": ["c1", "c2"],
+    "algorithms/u-busy/11": ["c1", "c2"],
+    "algorithms/u-busy/12": ["c1", "c2"],
+    "other/u/l-out-1": ["c1", "c2"],
+    "other/u/l-out-2": ["c1", "c2"],
+  };
+  const lessonOrder = Object.keys(lessonConcepts);
+  const { index } = buildIndex({ unitConcepts, lessonConcepts, lessonOrder, curated: [] });
+  const kept = index.units["algorithms/u-busy"];
+  // Only the two outward lessons survive — self rows never reach the index.
+  expect(kept.map((h) => h.lesson).sort()).toEqual(["other/u/l-out-1", "other/u/l-out-2"]);
+  // And the inverse map has no self-referencing row.
+  for (const [lesson, hits] of Object.entries(index.lessons)) {
+    const ownUnit = lesson.split("/").slice(0, 2).join("/");
+    expect(hits.some((h) => h.unit === ownUnit)).toBe(false);
+  }
+});
+
 // vitest serves modules under a /@fs prefix, so import.meta.url cannot be
 // used for filesystem paths here; the suite always runs with cwd = site/.
 test("assertCuratedRefs fails fast on dangling refs so the builder never writes them", () => {
@@ -174,6 +207,16 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
       expect(h.lesson).toMatch(/^[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9-]+$/);
     }
   }
+  // Outward-only invariant: no unit lists its own lessons (they would re-point
+  // a lesson at the unit it already lives in, and crowd outward links out of
+  // the cap). Enforced in the builder so both UI blocks point outward.
+  for (const [unit, hits] of Object.entries(index.units)) {
+    expect(hits.some((h) => h.lesson.startsWith(`${unit}/`))).toBe(false);
+  }
+  for (const [lesson, hits] of Object.entries(index.lessons)) {
+    const ownUnit = lesson.split("/").slice(0, 2).join("/");
+    expect(hits.some((h) => h.unit === ownUnit)).toBe(false);
+  }
   // Goal pin: the spec promises links between the algorithms track and ALL
   // lessons — the lessons map must contain non-algorithms keys.
   expect(Object.keys(index.lessons).some((k) => !k.startsWith("algorithms/"))).toBe(true);
@@ -205,9 +248,10 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
   const { _note: _c, ...committedTitles } = titles;
   expect(committedTitles).toEqual(freshTitles);
 
-  // Pilot databases×algorithms (P1-P3): exact derived rows.
+  // Pilot databases×algorithms (P1-P3): exact derived rows. The builder now
+  // drops a unit's own lessons BEFORE the cap, so these counts are outward-only.
   const u03 = index.units["algorithms/03-sorting-search"];
-  expect(u03.length).toBe(9);
+  expect(u03.length).toBe(3);
   expect(u03).toContainEqual({
     lesson: "databases/03-execution-plans/03-join-algorithms",
     shared: 3,
@@ -219,7 +263,7 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     canonical: false,
   });
   const u01 = index.units["algorithms/01-thinking-complexity"];
-  expect(u01.length).toBe(9);
+  expect(u01.length).toBe(2);
   expect(u01).toContainEqual({
     lesson: "databases/02-indexes/01-index-anatomy",
     shared: 2,
@@ -241,7 +285,7 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     },
   ]);
   const u05 = index.units["algorithms/05-hashing"];
-  expect(u05.length).toBe(9);
+  expect(u05.length).toBe(3);
   expect(u05).toContainEqual({
     lesson: "databases/03-execution-plans/03-join-algorithms",
     shared: 3,
@@ -258,22 +302,22 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     "databases/06-migrations/03-lock-queue-incident",
     "databases/07-sharding/02-shard-key-selection",
   ]);
-  // P4: FIFO lock queue is derived; unit 06 stays capped at 12 by evicting
-  // its weakest in-track row (own quiz-short, shared 2) per cross-track-first.
+  // P4: FIFO lock queue is derived. Self-rows are dropped before the cap, so
+  // unit 06 lists only its outward uses (no own quiz-short/drill/etc.).
   const u06 = index.units["algorithms/06-lists-stacks-queues"];
-  expect(u06.length).toBe(12);
+  expect(u06.length).toBe(5);
   expect(u06).toContainEqual({
     lesson: "databases/06-migrations/03-lock-queue-incident",
     shared: 2,
     canonical: false,
   });
   expect(
-    u06.some((h) => h.lesson === "algorithms/06-lists-stacks-queues/quiz-short"),
+    u06.some((h) => h.lesson.startsWith("algorithms/06-lists-stacks-queues/")),
   ).toBe(false);
   // Bonus derived row: level-order traversal runs on a FIFO queue.
-  // P8 pin (B-tree bridge) lands on top as canonical; unit count 10 -> 11.
+  // P8 pin (B-tree bridge) lands on top as canonical.
   const u07 = index.units["algorithms/07-trees"];
-  expect(u07.length).toBe(11);
+  expect(u07.length).toBe(5);
   expect(u07).toContainEqual({
     lesson: "databases/06-migrations/03-lock-queue-incident",
     shared: 2,

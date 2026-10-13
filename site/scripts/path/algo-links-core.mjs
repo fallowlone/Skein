@@ -119,7 +119,16 @@ export function buildIndex({ unitConcepts, lessonConcepts, lessonOrder = [], kno
   const { index, warnings: cw } = applyCurated(derived, curated);
 
   const units = {};
-  for (const [unit, hits] of Object.entries(index)) units[unit] = hits.slice(0, CAP_PER_ALGO);
+  for (const [unit, hits] of Object.entries(index)) {
+    // Drop the unit's own lessons BEFORE the cap. Self-rows share the most
+    // concepts with their own unit, so they dominate the ranking; keeping them
+    // would (a) let them occupy cap slots and evict genuine outward links, and
+    // (b) seed a self-referencing lesson-side row ("this lesson is used by its
+    // own unit"). The "where used" / "topic algorithms" blocks must point
+    // outward. Mirrors the self-filter the UI helpers apply as defence-in-depth.
+    const outward = hits.filter((h) => !h.lesson.startsWith(`${unit}/`));
+    units[unit] = outward.slice(0, CAP_PER_ALGO);
+  }
 
   const lessons = {};
   for (const [unit, hits] of Object.entries(units)) {
