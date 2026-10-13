@@ -2,7 +2,7 @@
 import type { Env, RequestData } from "../../lib/types";
 import { getUserById, termsCurrent } from "../../lib/db";
 import { readBodyBounded } from "../../lib/coach";
-import { answerMatches, lessonAccessible, loadLesson, parseLessonPath, requiredExercises } from "../../lib/lesson-access";
+import { answerMatches, loadLesson, parseLessonPath, requiredExercises } from "../../lib/lesson-access";
 import { error, isSameOriginMutation, json } from "../../lib/response";
 
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
@@ -25,7 +25,6 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
 
   const result = await loadLesson(ctx.env, path);
   if (!result.ok) return error(result.status, result.code);
-  if (!(await lessonAccessible(ctx.env.DB, userId, result.payload))) return error(403, "lesson_locked");
 
   let required;
   try { required = requiredExercises(result.payload.lesson.body.root); }

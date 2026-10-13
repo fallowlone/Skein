@@ -36,7 +36,11 @@ export default defineConfig({
   integrations: [
     tailwind({ applyBaseStyles: false }),
     mdx(),
-    preact({ compat: true }),
+    // Generated NGSL vocab data (>500KB each) carries no JSX, so keep it out
+    // of the preset's Babel pass — otherwise @babel/generator prints a
+    // "deoptimised styling" note per file on every build. esbuild still
+    // handles the TS syntax; output is unchanged.
+    preact({ compat: true, exclude: [/english\/data\/vocab-b[12]\.ts/] }),
     sitemap({
       filter: (page) => !page.includes("/admin"),
       customPages: Object.values(lessonIndex).map(

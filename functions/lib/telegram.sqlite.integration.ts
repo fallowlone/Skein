@@ -4,7 +4,6 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { onRequestPost as githubCourseWebhook } from "../api/billing/github-sponsors";
 import { onRequestPost as lessonAttempt } from "../api/lessons/attempt";
-import { lessonAccessible } from "./lesson-access";
 import {
   applyTelegramSubscriptionProviderState,
   approveTelegramPreCheckout,
@@ -376,7 +375,5 @@ sqlite.prepare("INSERT INTO lesson_exercise_passes (user_id, lesson_key, exercis
   .run(42, firstKey, "retired-question", Date.now());
 assert.deepEqual(await (await submit(42, "q1", 1)).json(), { passed: true, lessonCompleted: false });
 assert.deepEqual(await (await submit(42, "d1", [0, 1])).json(), { passed: true, lessonCompleted: true });
-assert.equal(await lessonAccessible(db, 42, { ...firstPayload, graph: { navPrev: firstKey }, lesson: { ...firstPayload.lesson, key: "algorithms/01-foundations/02-next" } } as any), true);
-assert.equal(await lessonAccessible(db, 43, { ...firstPayload, graph: { navPrev: firstKey }, lesson: { ...firstPayload.lesson, key: "algorithms/01-foundations/02-next" } } as any), false);
 globalThis.fetch = originalFetch;
-console.log("telegram.sqlite.integration: PASS signed-in Quiz and DragOrder unlock the next lesson only after both pass");
+console.log("telegram.sqlite.integration: PASS signed-in Quiz and DragOrder attempts grade and complete the lesson");
