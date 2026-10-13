@@ -33,7 +33,9 @@ export default defineConfig({
   }),
   integrations: [
     tailwind({ applyBaseStyles: false }),
-    preact({ compat: false }),
+    // Same Babel exclusion as astro.config.mjs: generated vocab data files
+    // (>500KB, no JSX) must not go through the preset's Babel pass.
+    preact({ compat: false, exclude: [/english\/data\/vocab-b[12]\.ts/] }),
   ],
   vite: {
     ssr: { noExternal: ["gsap"] },
