@@ -31,12 +31,12 @@ export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'", // wasm-unsafe-eval: transformers.js (whisper)
   "style-src 'self' 'unsafe-inline'",
-  "font-src 'self'",
+  "font-src 'self' data:", // Vite inlines sub-4KB fonts as data: URIs
   "img-src 'self' data: https://avatars.githubusercontent.com",
   "connect-src 'self' https://api.anthropic.com", // /api (self) + self-hosted /models/ weights + BYOK grader
   "worker-src 'self' blob:", // transformers.js worker
   "base-uri 'self'",
-  "form-action 'self'",
+  "form-action 'self' https://github.com", // login form POSTs to /api/auth/login, which 302s to github.com/oauth — Chromium checks form-action against the redirect target too
   "frame-ancestors 'none'", // header-only (ignored in <meta>); supersedes X-Frame-Options on modern browsers
   "object-src 'none'", // header-only hardening
 ].join("; ");

@@ -4,6 +4,8 @@ import { resolveSessionRecord } from "./lib/session";
 import { parseCookies, verifyValue } from "./lib/cookies";
 import { rateLimit } from "./lib/ratelimit";
 import { withSecurityHeaders, error } from "./lib/response";
+import { bindLogger, type BoundLogger, type LogEntry } from "./lib/logger";
+import { flushLogs } from "./lib/logstore";
 
 function cookieName(env: Env): string { return env.COOKIE_NAME ?? "session"; }
 
@@ -18,11 +20,26 @@ export function requiresAccount(pathname: string): boolean {
 export const onRequest: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const { request, env, next, data } = ctx;
 
+  // Logger/buffer init is the first statement: early returns below must be
+  // logged, and the flush in `finally` must see every entry.
+  const url = new URL(request.url);
+  const requestId = crypto.randomUUID();
+  const buf: LogEntry[] = [];
+  const logger: BoundLogger = bindLogger(buf, { route: url.pathname, rid: requestId, user: null });
+  data.requestId = requestId;
+  data.log = buf;
+  data.logger = logger;
+  const respond = (res: Response): Response => {
+    // Set rid after the wrap: incoming headers may be immutable
+    // (e.g. Response.redirect), the rebuilt ones never are.
+    const out = withSecurityHeaders(res);
+    out.headers.set("X-Request-Id", requestId);
+    return out;
+  };
+
   // Single error boundary for every endpoint: a D1/KV outage (or any unhandled
   // throw downstream) becomes a generic 500 instead of a stack trace to the client.
   try {
-    const url = new URL(request.url);
-
     // Resolve session (signed cookie -> sid -> userId)
     data.userId = null;
     const cookies = parseCookies(request.headers.get("Cookie"));
@@ -35,23 +52,35 @@ export const onRequest: PagesFunction<Env, any, RequestData> = async (ctx) => {
         data.githubAccessToken = session?.githubAccessToken;
       }
     }
+    logger.setUser(data.userId);
 
     if (!data.userId && requiresAccount(url.pathname)) {
       const lang = url.pathname.startsWith("/ru/") ? "ru" : "en";
-      if (url.pathname.endsWith(".json")) return withSecurityHeaders(error(401, "auth_required"));
-      return withSecurityHeaders(Response.redirect(`${url.origin}/${lang}/account/`, 302));
+      if (url.pathname.endsWith(".json")) {
+        logger.log("warn", "api.auth_required", "guest hit account-gated JSON");
+        return respond(error(401, "auth_required"));
+      }
+      logger.log("warn", "api.account_redirect", "guest redirected to account");
+      return respond(Response.redirect(`${url.origin}/${lang}/account/`, 302));
     }
 
     // Rate-limit mutating API calls per IP
     if (url.pathname.startsWith("/api/") && request.method !== "GET") {
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
       const rl = await rateLimit({ kv: env.SESSIONS, ip, bucket: "api-write", limit: 60, windowSec: 60 });
-      if (!rl.ok) return withSecurityHeaders(error(429, "rate_limited"));
+      if (!rl.ok) {
+        logger.log("warn", "api.rate_limited", "rate limit exceeded", { ip });
+        return respond(error(429, "rate_limited"));
+      }
     }
 
-    return withSecurityHeaders(await next());
+    return respond(await next());
   } catch (e) {
-    console.error("unhandled api error:", e instanceof Error ? e.stack ?? e.message : e);
-    return withSecurityHeaders(error(500, "internal"));
+    logger.log("error", "api.unhandled", "unhandled middleware error", {
+      stack: e instanceof Error ? (e.stack ?? e.message) : String(e),
+    });
+    return respond(error(500, "internal"));
+  } finally {
+    ctx.waitUntil?.(flushLogs(env, buf));
   }
 };
