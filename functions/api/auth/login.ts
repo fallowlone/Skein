@@ -16,12 +16,18 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
   const url = new URL(request.url);
   if (!isSameOriginMutation(request)) return error(403, "csrf");
-  if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) return error(400, "bad_form");
+  // Full-page form POST: answer failures with a redirect back to the consent
+  // form, not a JSON body — the browser would render raw JSON as a dead page.
+  const back = (lang: string, reason: string) =>
+    new Response(null, { status: 302, headers: { Location: `/${lang}/account?auth=${reason}` } });
+  if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) {
+    return back("en", "failed");
+  }
   const raw = await readBodyBounded(request, 1024);
-  if (!raw) return error(400, "bad_form");
+  if (!raw) return back("en", "failed");
   const form = new URLSearchParams(new TextDecoder().decode(raw));
-  if (form.get("terms") !== "accept" || !env.TERMS_VERSION) return error(400, "terms_required");
   const lang = form.get("lang") === "ru" ? "ru" : "en";
+  if (form.get("terms") !== "accept" || !env.TERMS_VERSION) return back(lang, "terms_required");
   const returnTo = form.get("returnTo") === "coach" ? "coach" : "account";
 
   // random state, stored signed in a short-lived cookie for CSRF protection

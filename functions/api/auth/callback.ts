@@ -8,6 +8,29 @@ import { parseCookies, verifyValue, signValue, serializeCookie, authHintCookie, 
 
 function cookieName(env: Env): string { return env.COOKIE_NAME ?? "session"; }
 
+function failRedirect(
+  request: Request,
+  env: Env,
+  signedState: string | undefined,
+  reason: "failed" | "cancelled" | "terms_required",
+): Response {
+  // The OAuth state cookie is the only place the pre-login language lives.
+  // verifyValue may fail here (that is why we are failing), so fall back to the
+  // unverified payload for routing only — it is never trusted for auth.
+  let lang = "en";
+  if (signedState) {
+    const dot = signedState.lastIndexOf(".");
+    const raw = dot >= 0 ? signedState.slice(0, dot) : signedState;
+    const guess = raw.split("|")[1];
+    if (guess === "ru" || guess === "en") lang = guess;
+  }
+  const secure = isSecureRequest(new URL(request.url), env);
+  const headers = new Headers();
+  headers.append("Set-Cookie", serializeCookie("oauth_state", "", { httpOnly: true, secure, maxAge: 0 }));
+  headers.set("Location", `/${lang}/account?auth=${reason}`);
+  return new Response(null, { status: 302, headers });
+}
+
 export const onRequestGet: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
   const url = new URL(request.url);
@@ -16,10 +39,14 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
 
   const cookies = parseCookies(request.headers.get("Cookie"));
   const signedState = cookies["oauth_state"];
+  // GitHub redirects back with ?error=access_denied when the user cancels.
+  if (url.searchParams.get("error")) return failRedirect(request, env, signedState, "cancelled");
   const verified = signedState ? await verifyValue(signedState, env.SESSION_SECRET) : null;
-  if (!code || !state || !verified) return new Response("Bad request", { status: 400 });
+  if (!code || !state || !verified) return failRedirect(request, env, signedState, "failed");
   const [expectedState, lang, returnTo, termsVersion] = verified.split("|");
-  if (state !== expectedState || !termsVersion || termsVersion !== env.TERMS_VERSION) return new Response("State mismatch", { status: 400 });
+  if (state !== expectedState || !termsVersion || termsVersion !== env.TERMS_VERSION) {
+    return failRedirect(request, env, signedState, "failed");
+  }
 
   let user;
   let accessToken = "";
@@ -56,7 +83,7 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
     // but return a generic body — no failure detail (e.g. the GitHub error code)
     // leaks to the client.
     console.error("auth callback failed:", err);
-    return new Response("Auth failed", { status: 502 });
+    return failRedirect(request, env, signedState, "failed");
   }
 
   const sid = await createSession(env.SESSIONS, user.id, accessToken, env.SESSION_SECRET);
