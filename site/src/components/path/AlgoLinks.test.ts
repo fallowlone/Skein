@@ -90,6 +90,35 @@ describe("linksForUnit", () => {
   it("returns [] for an unknown unit", () => {
     expect(linksForUnit(big, "algorithms/u-nope", "en")).toEqual([]);
   });
+
+  it("excludes the unit's own lessons (block points outward, not back at itself)", () => {
+    const idx = {
+      units: {
+        "algorithms/u-self": [
+          { lesson: "algorithms/u-self/01-a", shared: 9, canonical: false },
+          { lesson: "algorithms/u-self/02-b", shared: 8, canonical: false },
+          { lesson: "backend/db/07-x", shared: 4, canonical: false },
+        ],
+      },
+      lessons: {},
+    };
+    const links = linksForUnit(idx, "algorithms/u-self", "en");
+    expect(links.map((l) => l.lesson)).toEqual(["backend/db/07-x"]);
+  });
+
+  it("keeps same-track lessons from a DIFFERENT unit (only self is excluded)", () => {
+    const idx = {
+      units: {
+        "algorithms/u-a": [
+          { lesson: "algorithms/u-b/03-c", shared: 6, canonical: false },
+          { lesson: "algorithms/u-a/01-a", shared: 9, canonical: false },
+        ],
+      },
+      lessons: {},
+    };
+    const links = linksForUnit(idx, "algorithms/u-a", "en");
+    expect(links.map((l) => l.lesson)).toEqual(["algorithms/u-b/03-c"]);
+  });
 });
 
 describe("rowMeta", () => {

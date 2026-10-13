@@ -85,7 +85,12 @@ export function linksForLesson(index: LinkIndex, lessonKey: string, lang: Locale
 /** Lessons where an algo unit gets used (algo-side block rows). */
 export function linksForUnit(index: LinkIndex, unitId: string, lang: Locale): LessonLink[] {
   const hits = [...(index.units[unitId] ?? [])].sort(byRank);
-  return hits.slice(0, CAP_PER_ALGO).map((h) => {
+  // "Where this unit gets used" must point OUTWARD. Without this filter the
+  // unit's own lessons dominate the hits (they share the most concepts with
+  // their own unit), so the block just re-lists what's rendered below it and
+  // hides the genuine cross-unit/cross-track signal. Drop same-unit lessons.
+  const outward = hits.filter((h) => !h.lesson.startsWith(`${unitId}/`));
+  return outward.slice(0, CAP_PER_ALGO).map((h) => {
     const track = h.lesson.split("/")[0] || "";
     const slug = h.lesson.split("/")[2] || h.lesson;
     return {
