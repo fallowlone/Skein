@@ -51,5 +51,7 @@ describe("response", () => {
     // must NOT be more permissive than the meta policy (no open https: / blob: img-src)
     expect(csp).toContain("img-src 'self' data: https://avatars.githubusercontent.com");
     expect(csp).not.toContain("img-src 'self' data: blob: https:");
+    expect(csp).toContain("font-src 'self' data:"); // Vite inlines sub-4KB fonts
+    expect(csp).toContain("form-action 'self' https://github.com"); // login POST 302s to github oauth
   });
 });
