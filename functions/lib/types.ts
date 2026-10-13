@@ -38,4 +38,5 @@ export interface UserRow {
 export interface RequestData extends Record<string, unknown> {
   userId: number | null;
   githubAccessToken?: string;
+  requestId: string;
 }
