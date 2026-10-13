@@ -18,7 +18,9 @@ describe("OAuth login return target", () => {
       }),
       env: { GITHUB_CLIENT_ID: "client", SESSION_SECRET: "secret", TERMS_VERSION: "v1" },
     } as any);
-    expect((await onRequestPost(ctx("lang=ru&returnTo=coach"))).status).toBe(400);
+    expect((await onRequestPost(ctx("lang=ru&returnTo=coach"))).status).toBe(302);
+    const termsRedirect = await onRequestPost(ctx("lang=ru&returnTo=coach"));
+    expect(termsRedirect.headers.get("location")).toBe("/ru/account?auth=terms_required");
     expect((await onRequestPost(ctx("lang=ru&terms=accept", "https://other.test"))).status).toBe(403);
     const response = await onRequestPost(ctx("lang=ru&returnTo=coach&terms=accept"));
     expect(response.status).toBe(302);
