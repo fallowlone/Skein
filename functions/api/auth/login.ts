@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env } from "../../lib/types";
+import type { BoundLogger } from "../../lib/logger";
 import { authorizeUrl } from "../../lib/github";
 import { readBodyBounded } from "../../lib/coach";
 import { signValue, serializeCookie, isSecureRequest } from "../../lib/cookies";
@@ -30,9 +31,14 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   if (form.get("terms") !== "accept" || !env.TERMS_VERSION) return back(lang, "terms_required");
   const returnTo = form.get("returnTo") === "coach" ? "coach" : "account";
 
-  // random state, stored signed in a short-lived cookie for CSRF protection
+  // random state, stored signed in a short-lived cookie for CSRF protection.
+  // The 5th segment carries this request's rid so the callback can log the
+  // same flow id — login and callback are different requests with different
+  // rids, and the funnel joins them on this value.
+  const data = (ctx as any).data as { requestId?: string; logger?: BoundLogger } | undefined;
+  const loginRid = data?.requestId ?? crypto.randomUUID();
   const state = crypto.randomUUID();
-  const stateCookie = await signValue(`${state}|${lang}|${returnTo}|${env.TERMS_VERSION}`, env.SESSION_SECRET);
+  const stateCookie = await signValue(`${state}|${lang}|${returnTo}|${env.TERMS_VERSION}|${loginRid}`, env.SESSION_SECRET);
   const redirectUri = `${url.origin}/api/auth/callback`;
 
   const headers = new Headers();
@@ -40,5 +46,6 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
     httpOnly: true, secure: isSecureRequest(url, env), maxAge: 600, sameSite: "Lax",
   }));
   headers.set("Location", authorizeUrl(env.GITHUB_CLIENT_ID, redirectUri, state));
+  data?.logger?.log("info", "auth.started", "oauth state issued", { flow: loginRid });
   return new Response(null, { status: 302, headers });
 };
