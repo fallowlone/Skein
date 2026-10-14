@@ -11,7 +11,33 @@ const OUTCOMES: Outcome[] = ["correct", "partial", "wrong", "dont_know"];
  * Expected reduction in entropy from asking this item about this cell:
  *   H(prior) − Σ_outcome P(outcome) · H(posterior | outcome)
  */
+/**
+ * Memo for `expectedGain`: inputs are (posterior array, item, band) and the
+ * function is pure, so a cache hit returns the bit-identical double. Keyed by
+ * posterior *reference* in a WeakMap — `applyResponse` always allocates a new
+ * posterior array and never mutates, so a cache entry can never go stale, and
+ * dead cells' entries GC away. The sub-key covers every other input the math
+ * reads (item id + kind, cell facet, band — `likelihoodVector` reads nothing
+ * else), so distinct items never collide even when test helpers reuse ids. Why this matters: `nextItem` re-scores every
+ * unsettled cell's whole bucket on every step, but untouched cells keep their
+ * posterior for many steps — without the memo the 12-seed accuracy gate in
+ * simulate.test.ts blows past CI's 120s testTimeout (measured ~60s for the
+ * file on an M2 Pro, 2-4x that on shared CI runners).
+ */
+const gainMemo = new WeakMap<readonly number[], Map<string, number>>();
+
 export function expectedGain(cell: Cell, item: AssessItem, band: Band): number {
+  let byItem = gainMemo.get(cell.posterior);
+  if (!byItem) { byItem = new Map(); gainMemo.set(cell.posterior, byItem); }
+  const key = `${item.id}␟${item.kind}␟${cell.facet}␟${band}`;
+  const hit = byItem.get(key);
+  if (hit !== undefined) return hit;
+  const score = expectedGainUncached(cell, item, band);
+  byItem.set(key, score);
+  return score;
+}
+
+function expectedGainUncached(cell: Cell, item: AssessItem, band: Band): number {
   const prior = cell.posterior;
   const before = entropyOrd(prior);
   let after = 0;

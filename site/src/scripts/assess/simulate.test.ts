@@ -42,13 +42,16 @@ describe("accuracy gates (spec §10)", () => {
   // keep the single committed-seed `result` above unchanged — this is a targeted fix to the one
   // gate the measurement showed was under-sampled, not a rewrite of the harness.
   const HMG_SEEDS = Array.from({ length: 12 }, (_, i) => 2000 + i * 13);
+  // 300s budget (not the 120s default): 13 full sims by design. Shared CI
+  // runners are several times slower than a dev laptop; the expectation math
+  // itself is unchanged — this only stops slow hardware from failing the gate.
   test("an honest learner is never scored below a guesser of the same true ability (averaged over 12 seeds — sd of the mean ~0.0040, see the comment above for the single-seed instability this replaces)", () => {
     const draws = HMG_SEEDS.map(
       (seed) => runSimulation({ learners: 200, conceptsPerLearner: 12, seed }).honestMinusGuesser,
     );
     const mean = draws.reduce((a, b) => a + b, 0) / draws.length;
     expect(mean).toBeGreaterThanOrEqual(0);
-  });
+  }, 300_000);
 
   test("settling a cell costs at most 3 items at the median", () => {
     expect(result.medianItemsToSettle).toBeLessThanOrEqual(3);
