@@ -10,6 +10,9 @@ const RUN_TIMEOUT_MS = 2500;
 type RawResult = { i: number; actual: string; pass: boolean };
 
 function buildHarness(problem: WorkspaceProblem, tests: WorkspaceTest[]): string {
+  // ponytail: functionName interpolated into sandbox source — validate identifier
+  // shape here; full fix would pass it as a string and resolve inside the sandbox.
+  if (!/^[A-Za-z_$][\w$]*$/.test(problem.functionName)) throw new Error("bad functionName");
   const cases = tests.map((t, i) => ({ i, args: t.args, expected: t.expected, compare: t.compare }));
   return `
 (function () {

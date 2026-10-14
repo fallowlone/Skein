@@ -177,7 +177,7 @@ drop policy if exists lesson_graph_read on curriculum.lesson_graph;
 
 create policy tracks_read   on curriculum.tracks   for select using (true);
 create policy units_read    on curriculum.units    for select using (true);
-create policy lessons_read  on curriculum.lessons  for select using (true);
+create policy lessons_read  on curriculum.lessons  for select using (status = 'ready');
 create policy practice_read on curriculum.practice for select using (true);
 create policy projects_read on curriculum.projects for select using (true);
 create policy drill_read    on curriculum.drill    for select using (true);

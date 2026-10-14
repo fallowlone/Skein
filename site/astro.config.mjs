@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "astro/config";
-import tailwind from "@astrojs/tailwind";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
 import sitemap from "@astrojs/sitemap";
@@ -34,7 +33,6 @@ export default defineConfig({
   // Serial keeps peak memory low. (Real fix for build scale: on-demand SSR.)
   build: { concurrency: 1 },
   integrations: [
-    tailwind({ applyBaseStyles: false }),
     mdx(),
     // Generated NGSL vocab data (>500KB each) carries no JSX, so keep it out
     // of the preset's Babel pass — otherwise @babel/generator prints a

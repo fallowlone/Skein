@@ -2,12 +2,13 @@
 import type { Env } from "../../lib/types";
 import { parseCookies, verifyValue, serializeCookie, authHintCookie, isSecureRequest } from "../../lib/cookies";
 import { destroySession } from "../../lib/session";
-import { json } from "../../lib/response";
+import { json, error, isSameOriginMutation } from "../../lib/response";
 
 function cookieName(env: Env): string { return env.COOKIE_NAME ?? "session"; }
 
 export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
+  if (!isSameOriginMutation(request)) return error(403, "csrf");
   const cookies = parseCookies(request.headers.get("Cookie"));
   const signed = cookies[cookieName(env)];
   if (signed) {

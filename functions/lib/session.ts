@@ -15,7 +15,8 @@ async function tokenKey(secret: string): Promise<CryptoKey> {
 }
 
 async function protectToken(token: string, secret?: string): Promise<string> {
-  if (!secret) return token;
+  // Fail closed: never store raw OAuth tokens in KV. Callers must set SESSION_SECRET.
+  if (!secret) throw new Error("SESSION_SECRET is not configured");
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await tokenKey(secret), textEncoder.encode(token));
   return `${TOKEN_PREFIX}${base64(iv)}.${base64(new Uint8Array(encrypted))}`;

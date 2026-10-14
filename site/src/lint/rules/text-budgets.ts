@@ -11,7 +11,14 @@ export function checkTextBudgets(html: string, file: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = TAG_RE.exec(html))) {
     const cls = m[2];
-    const text = m[3].replace(/<[^>]+>/g, "").trim();
+    // Strip tags fully: script/style bodies first, then tags, then any
+    // leftover "<" so the result can never still contain "<script".
+    const text = m[3]
+      .replace(/<script[\s\S]*?<\/script\s*>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style\s*>/gi, " ")
+      .replace(/<[^>]+>/g, "")
+      .replace(/</g, "")
+      .trim();
     const budget = BUDGETS[cls];
     if (budget !== undefined && text.length > budget) {
       errs.push(`${file}: ${cls} text exceeds ${budget} chars (got ${text.length})`);

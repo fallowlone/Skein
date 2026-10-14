@@ -1,3 +1,4 @@
+import { sanitizeAuthoredHtml } from "~/lib/sanitize";
 import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/ItemView.tsx
 // Renders one AssessItem by kind and reports the answer back up. The three
@@ -174,7 +175,7 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
       {content && content !== "loading" && (
         <>
           <p class="assess-item-title">{tt(lang, content.title.en, content.title.ru)}</p>
-          <div class="assess-prompt prose assess-prose" dangerouslySetInnerHTML={{ __html: tt(lang, content.prompt.en, content.prompt.ru) }} />
+          <div class="assess-prompt prose assess-prose" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(tt(lang, content.prompt.en, content.prompt.ru)) }} />
           {item.kind === "recall" && <RecallBody lang={lang} task={content} onSubmit={submit} />}
           {item.kind === "predict" && <PredictBody lang={lang} task={content} onSubmit={submit} />}
           {item.kind === "explain" && <ExplainBody lang={lang} task={content} onSubmit={submit} />}

@@ -1,3 +1,4 @@
+import { sanitizeAuthoredHtml } from "~/lib/sanitize";
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 import { Input as ShadcnInput } from "~/components/ui/input";
@@ -258,7 +259,7 @@ function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, o
       {open && (
         <div class="mt-4">
           {hint && <p class="text-xs text-muted italic mb-3">{tt(lang, hint.en, hint.ru)}</p>}
-          <div class="prose max-w-none text-sm mb-4" dangerouslySetInnerHTML={{ __html: tt(lang, task.prompt.en, task.prompt.ru) }} />
+          <div class="prose max-w-none text-sm mb-4" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(tt(lang, task.prompt.en, task.prompt.ru)) }} />
           <Field label={tt(lang, "Working mode", "Режим выполнения")} htmlFor={`${task.id}-mode`}>
             <Select value={mode} onValueChange={(v: string) => { setMode(v as PracticeMode); writeResponse(lessonKey, modeKey, v); }}>
               <SelectTrigger id={`${task.id}-mode`} class="text-sm px-2 py-1.5 mb-1 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink">
@@ -484,7 +485,7 @@ function DebugBody({ lang, lessonKey, task, mode, onChange }: {
           {hints.slice(0, hintIdx).map((h, i) => <li key={i} class="text-sm text-muted">💡 {tt(lang, h.en, h.ru)}</li>)}
         </ul>
       )}
-      {showSolution && <div class="mt-3 prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: tt(lang, reveal.en, reveal.ru) }} />}
+      {showSolution && <div class="mt-3 prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(tt(lang, reveal.en, reveal.ru)) }} />}
     </div>
   );
 }
@@ -528,7 +529,7 @@ function ReviewBody({ lang, lessonKey, task, onChange }: {
                 {tt(lang, SEVERITY_LABEL[f.severity]?.en ?? f.severity, SEVERITY_LABEL[f.severity]?.ru ?? f.severity)}
               </span>
               <span class="text-ink font-medium text-sm">{tt(lang, f.label.en, f.label.ru)}</span>
-              <div class="prose max-w-none text-sm text-ink-2 mt-1" dangerouslySetInnerHTML={{ __html: tt(lang, f.explanation.en, f.explanation.ru) }} />
+              <div class="prose max-w-none text-sm text-ink-2 mt-1" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(tt(lang, f.explanation.en, f.explanation.ru)) }} />
             </div>
           ))}
           {decoys && decoys.length > 0 && (
@@ -537,7 +538,7 @@ function ReviewBody({ lang, lessonKey, task, onChange }: {
               {decoys.map((d) => (
                 <div key={d.id} class="border-l-2 border-hairline pl-3 mb-2">
                   <span class="text-muted font-medium text-sm">{tt(lang, d.label.en, d.label.ru)}</span>
-                  <div class="prose max-w-none text-sm text-muted mt-1" dangerouslySetInnerHTML={{ __html: tt(lang, d.explanation.en, d.explanation.ru) }} />
+                  <div class="prose max-w-none text-sm text-muted mt-1" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(tt(lang, d.explanation.en, d.explanation.ru)) }} />
                 </div>
               ))}
             </div>
@@ -646,7 +647,7 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
           <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">
             {tt(lang, "Model answer", "Эталонный ответ")}
           </div>
-          <div class="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: body }} />
+          <div class="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(body) }} />
 
           <div class="mt-4 pt-3 border-t border-hairline">
             <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-2">
@@ -691,7 +692,7 @@ function Constraints({ lang, text }: { lang: Locale; text: string }) {
   return (
     <div class="mb-3">
       <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "Constraints", "Ограничения")}</div>
-      <div class="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: text }} />
+      <div class="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(text) }} />
     </div>
   );
 }
@@ -734,7 +735,7 @@ function Rubric({ lang, lessonKey, taskId, items }: { lang: Locale; lessonKey: s
               checked={checked[i]}
               onCheckedChange={() => toggle(i)}
             />
-            <label for={`${taskId}-rubric-${i}`} dangerouslySetInnerHTML={{ __html: it }} />
+            <label for={`${taskId}-rubric-${i}`} dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(it) }} />
           </li>
         ))}
       </ul>
@@ -834,7 +835,7 @@ function Incident({ lang, lessonKey, task, steps, onChange }: {
       {steps.map((s, i) => (
         <li key={i} class="border-l-2 border-hairline-strong pl-4">
           <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{s.label}</div>
-          <div class="prose max-w-none text-sm mb-2" dangerouslySetInnerHTML={{ __html: s.prompt }} />
+          <div class="prose max-w-none text-sm mb-2" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(s.prompt) }} />
           {!revealed[i] ? (
             <div>
               <ShadcnTextarea
@@ -867,7 +868,7 @@ function Incident({ lang, lessonKey, task, steps, onChange }: {
                   <p class="text-sm text-ink-2 whitespace-pre-wrap">{drafts[i]}</p>
                 </div>
               )}
-              <div class="prose max-w-none text-sm bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)]" dangerouslySetInnerHTML={{ __html: s.reveal }} />
+              <div class="prose max-w-none text-sm bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)]" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(s.reveal) }} />
             </div>
           )}
         </li>

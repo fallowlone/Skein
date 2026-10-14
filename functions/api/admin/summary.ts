@@ -2,6 +2,7 @@
 import type { Env, RequestData } from "../../lib/types";
 import { json, error } from "../../lib/response";
 import { tokensEqual } from "../../lib/metrics";
+import { rateLimit } from "../../lib/ratelimit";
 
 interface ViewRow { lesson: string; track: string | null; views: number; uniq: number; }
 interface TimeRow { lesson: string; avg_seconds: number; samples: number; }
@@ -13,6 +14,9 @@ interface FeedbackRow { id: number; ts: number; lesson: string; lang: string | n
  * not wired to GitHub auth on purpose — one operator, one token.
  */
 export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) => {
+  const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rl = await rateLimit({ kv: ctx.env.SESSIONS, ip, bucket: "admin", limit: 30, windowSec: 60 });
+  if (!rl.ok) return error(429, "rate_limited");
   const token = ctx.env.ADMIN_TOKEN;
   if (!token) return error(503, "admin_disabled");
   const auth = ctx.request.headers.get("Authorization") ?? "";

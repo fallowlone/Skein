@@ -25,8 +25,8 @@ const attrOf = (openTag: string, attr: string): string | undefined =>
 /** Text with tags and script/style bodies stripped — what a reader actually sees. */
 export function visibleText(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();

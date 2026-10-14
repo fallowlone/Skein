@@ -29,7 +29,7 @@ export const MAX_CTX_BYTES = 4000;
 
 const REDACTED = "[redacted]";
 const SECRET_KEY_RE = /secret|token|cookie|authorization|password/i;
-const SECRET_VALUE_RES = [/^ghu_[A-Za-z0-9_]+$/, /^github_pat_[A-Za-z0-9_]+$/, /^sk-[A-Za-z0-9_-]+$/, /^[^\s@]+@[^\s@]+\.[^\s@]+$/];
+const SECRET_VALUE_RES = [/^ghu_[A-Za-z0-9_]+$/, /^github_pat_[A-Za-z0-9_]+$/, /^sk-[A-Za-z0-9_-]+$/, /^[^\s@]+@[^\s@]+\.[^\s@]+$/, /^sb_secret_[A-Za-z0-9_-]+$/, /^\d+:[A-Za-z0-9_-]{30,}$/, /^ghp_[A-Za-z0-9]+$/, /^gho_[A-Za-z0-9]+$/, /^ghc_[A-Za-z0-9]+$/];
 
 export function redact(value: unknown): unknown {
   if (typeof value === "string") {

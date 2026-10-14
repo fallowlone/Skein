@@ -13,8 +13,13 @@ describe("session", () => {
 
   it("keeps the OAuth token server-side in the session record", async () => {
     const kv = new FakeKV() as any;
-    const sid = await createSession(kv, 42, "oauth-token");
-    expect(await resolveSessionRecord(kv, sid)).toMatchObject({ userId: 42, githubAccessToken: "oauth-token" });
+    const sid = await createSession(kv, 42, "oauth-token", "session-secret");
+    expect(await resolveSessionRecord(kv, sid, "session-secret")).toMatchObject({ userId: 42, githubAccessToken: "oauth-token" });
+  });
+
+  it("refuses to store an OAuth token without a session secret (fail-closed)", async () => {
+    const kv = new FakeKV() as any;
+    await expect(createSession(kv, 42, "oauth-token")).rejects.toThrow("SESSION_SECRET");
   });
 
   it("encrypts the OAuth token in KV when a session secret is supplied", async () => {

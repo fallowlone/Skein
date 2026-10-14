@@ -1,3 +1,4 @@
+import { sanitizeAuthoredHtml } from "~/lib/sanitize";
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
@@ -135,7 +136,7 @@ function CommitRevealBody({
         <div class="assess-reveal">
           <div class="assess-label">{t("assess.reveal.model", lang)}</div>
           {/* eslint-disable-next-line react/no-danger -- authored lesson content, not user input */}
-          <div class="prose assess-prose" dangerouslySetInnerHTML={{ __html: revealHtml }} />
+          <div class="prose assess-prose" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(revealHtml) }} />
           <p class="assess-selfgrade-prompt">{t("assess.selfgrade.prompt", lang)}</p>
           <div class="assess-selfgrade">
             <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("hit")}>{t("assess.selfgrade.hit", lang)}</ShadcnButton>
@@ -252,7 +253,7 @@ export function ReviewBody({ lang, task, onSubmit }: BodyProps) {
                 <label for={reviewId}><span>{tt(lang, c.label.en, c.label.ru)}</span></label>
               </div>
               {shown && (
-                <div class="prose assess-prose assess-finding-explain" dangerouslySetInnerHTML={{ __html: tt(lang, c.explanation.en, c.explanation.ru) }} />
+                <div class="prose assess-prose assess-finding-explain" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(tt(lang, c.explanation.en, c.explanation.ru)) }} />
               )}
             </li>
           );

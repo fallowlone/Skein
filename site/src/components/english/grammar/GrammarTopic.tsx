@@ -1,3 +1,4 @@
+import { sanitizeAuthoredHtml } from "~/lib/sanitize";
 import { Button as ShadcnButton } from "~/components/ui/button";
 // GrammarTopic — the study screen for one topic, per CEFR level. RU teaching
 // prose is primary (gold); the topic animation sits up top as a framed plate.
@@ -182,7 +183,7 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
                     {lesson.examples.map((ex, i) => (
                       <div class="example" key={i}>
                         {/* authored content (not user input) — the only HTML is <b> emphasis */}
-                        <span class="ex-en" dangerouslySetInnerHTML={{ __html: ex.en }} />
+                        <span class="ex-en" dangerouslySetInnerHTML={{ __html: sanitizeAuthoredHtml(ex.en) }} />
                         <span class="ex-ru">{ex.ru}</span>
                       </div>
                     ))}

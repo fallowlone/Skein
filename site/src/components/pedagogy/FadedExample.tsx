@@ -1,6 +1,7 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { h, type ComponentChildren } from "preact";
+import { sanitizeAuthoredHtml } from "~/lib/sanitize";
 import { useState } from "preact/hooks";
 import { markFaded } from "~/scripts/user-state";
 import { t, type Locale } from "~/i18n";
@@ -29,7 +30,7 @@ function renderRich(value: RichContent): ComponentChildren {
   if (!isSerializedRichNode(value)) return value as ComponentChildren;
   if (value.type === "text") return value.value;
   if (value.type === "raw") {
-    return h("span", { dangerouslySetInnerHTML: { __html: value.value } });
+    return h("span", { dangerouslySetInnerHTML: { __html: sanitizeAuthoredHtml(value.value) } });
   }
   if (value.type === "element") {
     return h(
