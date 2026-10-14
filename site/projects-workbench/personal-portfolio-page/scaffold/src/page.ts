@@ -22,14 +22,29 @@ const hasTag = (html: string, name: string): boolean => tag(html, name).length >
 const attrOf = (openTag: string, attr: string): string | undefined =>
   new RegExp(`\\b${attr}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(openTag)?.slice(2).find((v) => v !== undefined);
 
-/** Text with tags and script/style bodies stripped — what a reader actually sees. */
+/** Text with tags and script/style bodies stripped — what a reader actually sees.
+ * Char scanner, deliberately regex-free: no tag-filter regex, so end-tag
+ * spacing tricks (</script bar>) cannot bypass it by construction. */
 export function visibleText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script\s*>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style\s*>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const lower = html.toLowerCase();
+  let out = "";
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) { out += html.slice(i); break; }
+    out += html.slice(i, lt);
+    const gt = html.indexOf(">", lt + 1);
+    if (gt === -1) break;
+    const head = lower.slice(lt + 1, gt).trimStart();
+    const blocked = head.startsWith("script") ? "script" : head.startsWith("style") ? "style" : null;
+    if (!blocked) { i = gt + 1; continue; }
+    const closeIdx = lower.indexOf(`</${blocked}`, gt + 1);
+    if (closeIdx === -1) break;
+    const closeEnd = html.indexOf(">", closeIdx + 1);
+    i = closeEnd === -1 ? html.length : closeEnd + 1;
+    out += " ";
+  }
+  return out.replace(/\s+/g, " ").trim();
 }
 
 export function checkPage({ html, css, js }: Artifact): Finding[] {
