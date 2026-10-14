@@ -2,7 +2,6 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, sessionDrivers } from "astro/config";
 import cloudflare from "@astrojs/cloudflare";
 import preact from "@astrojs/preact";
-import tailwind from "@astrojs/tailwind";
 
 const lessonRoot = fileURLToPath(new URL("./lesson-worker/", import.meta.url));
 const lessonSourceRoot = fileURLToPath(new URL("./lesson-worker/src/", import.meta.url));
@@ -32,7 +31,6 @@ export default defineConfig({
     imageService: "passthrough",
   }),
   integrations: [
-    tailwind({ applyBaseStyles: false }),
     // Same Babel exclusion as astro.config.mjs: generated vocab data files
     // (>500KB, no JSX) must not go through the preset's Babel pass.
     preact({ compat: false, exclude: [/english\/data\/vocab-b[12]\.ts/] }),
