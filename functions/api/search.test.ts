@@ -41,12 +41,26 @@ describe("validateSearchParams", () => {
 });
 
 describe("GET /api/search", () => {
-  it("400s on a bad query without calling the database", async () => {
+  it("422s on a bad query without calling the database", async () => {
     let called = false;
     globalThis.fetch = (async () => { called = true; return new Response("[]"); }) as any;
     const res = await onRequestGet(ctx("https://x/api/search?q=a&lang=en"));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
     expect(called).toBe(false);
+  });
+
+  it("maps every validation failure to 422 with its stable code", async () => {
+    const cases: Array<[string, string]> = [
+      ["q=a&lang=en", "q_too_short"],
+      [`q=${"x".repeat(129)}&lang=en`, "q_too_long"],
+      ["q=tcp&lang=de", "bad_lang"],
+      ["q=tcp", "bad_lang"],
+    ];
+    for (const [qs, code] of cases) {
+      const res = await onRequestGet(ctx(`https://x/api/search?${qs}`));
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: code });
+    }
   });
 
   it("maps rows to hits with a built href", async () => {

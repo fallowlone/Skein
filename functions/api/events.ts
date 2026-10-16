@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../lib/types";
 import { json, error } from "../lib/response";
+import { invalid } from "../lib/validate";
 import { parseEventsBody, MAX_BODY_BYTES } from "../lib/metrics";
 
 /**
@@ -11,7 +12,7 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   const text = await ctx.request.text();
   if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) return error(413, "too_large");
   const parsed = parseEventsBody(text);
-  if (!parsed.ok) return error(400, parsed.code);
+  if (!parsed.ok) return invalid(parsed.code);
 
   const now = Date.now();
   const stmt = ctx.env.DB.prepare(

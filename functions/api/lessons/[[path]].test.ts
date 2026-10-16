@@ -53,6 +53,16 @@ describe("GET /api/lessons/:path", () => {
     expect(response.headers.get("x-skein-authenticated")).toBe("1");
   });
 
+  it("422s a malformed lesson path without calling the backend", async () => {
+    let called = false;
+    globalThis.fetch = (async () => { called = true; return new Response("[]"); }) as any;
+    const bad = { ...context(), params: { path: ["en", "networking", "..", "01-handshake"] } };
+    const res = await onRequestGet(bad);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "bad_lesson_path" });
+    expect(called).toBe(false);
+  });
+
   it("rejects malformed and missing curriculum payloads", async () => {
     mockLesson({ ...payload, graph: { navPrev: undefined as any } });
     expect((await onRequestGet(context())).status).toBe(502);

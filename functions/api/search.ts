@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../lib/types";
 import { json, error } from "../lib/response";
+import { invalid, oneOf, text } from "../lib/validate";
 import { rateLimit } from "../lib/ratelimit";
 
 const MIN_Q = 2;
@@ -8,7 +9,7 @@ const MAX_Q = 128;
 const MAX_RESULTS = 20;
 const RATE_LIMIT = 30;      // requests per IP per window
 const RATE_WINDOW = 60;     // seconds
-const LOCALES = new Set(["en", "ru"]);
+const LOCALES = ["en", "ru"] as const;
 
 export interface SearchHit {
   slug: string; track: string; unit: string;
@@ -21,11 +22,11 @@ export type Validation =
 
 /** Reject bad input before it can reach the database. */
 export function validateSearchParams(q: string | null, lang: string | null): Validation {
-  const trimmed = (q ?? "").trim();
-  if (trimmed.length < MIN_Q) return { ok: false, reason: "q_too_short" };
-  if (trimmed.length > MAX_Q) return { ok: false, reason: "q_too_long" };
-  if (!lang || !LOCALES.has(lang)) return { ok: false, reason: "bad_lang" };
-  return { ok: true, q: trimmed, lang };
+  const tq = text(q, { min: MIN_Q, max: MAX_Q, code: "q_too_short", maxCode: "q_too_long" });
+  if (!tq.ok) return { ok: false, reason: tq.code };
+  const ll = oneOf(lang, LOCALES, "bad_lang");
+  if (!ll.ok) return { ok: false, reason: ll.code };
+  return { ok: true, q: tq.value, lang: ll.value };
 }
 
 interface Row {
@@ -36,7 +37,7 @@ interface Row {
 export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const url = new URL(ctx.request.url);
   const v = validateSearchParams(url.searchParams.get("q"), url.searchParams.get("lang"));
-  if (!v.ok) return error(400, v.reason);
+  if (!v.ok) return invalid(v.reason);
 
   const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
   // A KV outage must not become an uncaught throw here: it would propagate
