@@ -1,10 +1,28 @@
 import { fileURLToPath } from "node:url";
+import { createLogger } from "vite";
 import { defineConfig } from "astro/config";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
 import sitemap from "@astrojs/sitemap";
 import remarkRetrievalLessonKey from "./src/lib/remark-retrieval-lessonkey.mjs";
 import lessonIndex from "./src/content/path/lesson-index.json" with { type: "json" };
+// Build-log noise filter: direct-eval warnings fire only inside node_modules
+// WASM loaders (pglite, onnxruntime) and are unactionable from our source.
+// vite 8 offers no onwarn passthrough, so filter at the logger: skip a warning
+// only when it names BOTH eval and a node_modules path — any eval in our own
+// code still prints.
+const baseLogger = createLogger();
+const filteredLogger = {
+  ...baseLogger,
+  warn(msg, options) {
+    if (typeof msg === "string" && msg.includes("eval") && msg.includes("node_modules")) return;
+    baseLogger.warn(msg, options);
+  },
+  warnOnce(msg, options) {
+    if (typeof msg === "string" && msg.includes("eval") && msg.includes("node_modules")) return;
+    baseLogger.warnOnce(msg, options);
+  },
+};
 // NOTE: the curriculum lint runs as a SEPARATE post-build process
 // (`bun scripts/lint-dist.mjs`, chained in package.json `build`), not as an
 // in-process astro:build:done integration — that inherited the render's ~10GB
@@ -38,7 +56,9 @@ export default defineConfig({
     // of the preset's Babel pass — otherwise @babel/generator prints a
     // "deoptimised styling" note per file on every build. esbuild still
     // handles the TS syntax; output is unchanged.
-    preact({ compat: true, exclude: [/english\/data\/vocab-b[12]\.ts/] }),
+    // onnxruntime-web ships prebuilt minified dist (also >500KB): no JSX in
+    // it either, same note, same treatment.
+    preact({ compat: true, exclude: [/english\/data\/vocab-b[12]\.ts/, /node_modules\/onnxruntime-web\/dist\//] }),
     sitemap({
       filter: (page) => !page.includes("/admin"),
       customPages: Object.values(lessonIndex).map(
@@ -55,6 +75,13 @@ export default defineConfig({
     },
   },
   vite: {
+    build: {
+      // The >500KB chunks are route-scoped by design (grammar topic ~4.6MB
+      // behind client:visible, WASM loaders), never in the initial bundle —
+      // the default limit only adds noise. Sizes are tracked in dist/_astro.
+      chunkSizeWarningLimit: 5000,
+    },
+    customLogger: filteredLogger,
     ssr: { noExternal: ["gsap"] },
     // Dev only: the dep optimizer rewrites quickjs-emscripten into .vite/deps but does
     // not copy its sibling emscripten-module.wasm, so every sandbox run 404s with
