@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { createLogger } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
@@ -81,6 +82,9 @@ export default defineConfig({
       // the default limit only adds noise. Sizes are tracked in dist/_astro.
       chunkSizeWarningLimit: 5000,
     },
+    // Tailwind v4 (oxide scanner) — the documented integration; compiles the
+    // `@import "tailwindcss"` in global.css, incl. the @theme tokens.
+    plugins: [tailwindcss()],
     customLogger: filteredLogger,
     ssr: { noExternal: ["gsap"] },
     // Dev only: the dep optimizer rewrites quickjs-emscripten into .vite/deps but does
