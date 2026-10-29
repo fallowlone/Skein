@@ -1,0 +1,217 @@
+---
+slug: "05-distributed-job-scheduler"
+lang: en
+track: "system-design-cases"
+unit: "01-foundational"
+order: 5
+title: "Design a distributed job scheduler"
+summary: "Design cron at scale: store jobs with a next-run time, find due jobs without two schedulers grabbing the same one, hand them to workers under a lease, and accept that execution is at-least-once, so every job must be idempotent or fenced."
+estMin: 30
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - job-scheduling
+  - due-job-polling
+  - job-lease
+  - at-least-once-execution
+  - cron-misfire
+  - schedule-jitter
+prereqs:
+  - 06-async-messaging/01-message-queues
+  - 08-building-blocks/05-leader-election
+sources:
+  - https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE
+  - https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import Infographic from "~/components/diagram/Infographic.astro";
+import topOfHourSpike from "./infographics/top-of-hour-spike.svg?raw";
+
+<Hook>
+A billing company ran its monthly invoicing as a cron entry on one server. It worked for years. Then the server was replaced during a maintenance window that overlapped midnight on the first of the month, and invoicing simply didn't run. Nobody noticed for three days. The fix was to run the cron on two servers "for redundancy." The next month every customer got two invoices and two charges. The team had discovered both failure modes of scheduling in sixty days: a job that runs zero times, and a job that runs twice. A distributed scheduler exists to make the first impossible and the second harmless.
+</Hook>
+
+<Crux>A scheduler finds due jobs and leases them to workers. Losing a job is a bug; running one twice is a given, so jobs must be idempotent or fenced.</Crux>
+
+<Explanation>
+
+## Requirements
+
+Functional:
+
+- Submit a job: a payload (HTTP call, queue message, or task name with arguments) plus a schedule, either one-off ("at 2026-11-01 09:00 UTC") or recurring (a cron expression with a time zone).
+- Execute each due job on a worker close to its scheduled time.
+- Retry failed runs with backoff, up to a limit, then park them in a dead-letter state.
+- Query status and history per job; pause, resume, and cancel jobs.
+
+Non-functional:
+
+- **No lost jobs.** A due job must eventually run even if schedulers or workers crash. This is the property the single cron server lacked.
+- **At-least-once execution**, with duplicates rare and detectable. Exactly-once execution of an arbitrary side effect is not achievable; the design must say so out loud.
+- **Trigger latency** under a few seconds at p99, including at peak.
+- **High availability** of both the scheduling path and the API, and multi-tenant fairness so one tenant's burst doesn't starve others.
+
+## Estimation
+
+Assume 50M registered jobs and 10M executions per day.
+
+- Average rate: 10M / 86,400 ≈ **115 executions/s**. Trivial on average.
+- The real number is the peak. Humans write `0 * * * *` and `0 0 * * *`. If half of each hour's executions are scheduled for minute zero, that's 10M / 24 / 2 ≈ 208,000 jobs that all want to start in the same second. **The top of the hour is the design constraint**, not the daily average.
+- Storage: 50M job definitions × ~1 KB ≈ 50 GB, plus run history at 10M rows/day (partition by day and expire after a retention window).
+
+## High-level design
+
+Separate *what should run* (job definitions) from *when it is due* (an index on next-run time) from *running it* (workers pulling from a queue). Each stage can scale and fail independently.
+
+<FlowDiagram
+  label="Job scheduler architecture: clients call the scheduler API, which writes job definitions and next_run_at to a partitioned jobs store; scheduler shards each own a partition, find due jobs, and enqueue them into a work queue; workers pull runs, execute under a lease, and record outcomes in a runs table; on success the scheduler computes the next run time."
+  perRow={5}
+  hue="var(--d-compute)"
+  nodes={[
+    { id: "api", label: "Scheduler API", sub: "create / cancel" },
+    { id: "store", label: "Jobs store", sub: "next_run_at index" },
+    { id: "sched", label: "Scheduler shards", sub: "find due, enqueue" },
+    { id: "queue", label: "Work queue", sub: "per priority" },
+    { id: "workers", label: "Workers", sub: "lease + heartbeat" },
+    { id: "runs", label: "Runs table", sub: "status, attempt" },
+  ]}
+  edges={[
+    { from: "api", to: "store", label: "write" },
+    { from: "store", to: "sched", label: "due jobs" },
+    { from: "sched", to: "queue", label: "dispatch" },
+    { from: "queue", to: "workers", label: "pull" },
+    { from: "workers", to: "runs", label: "outcome" },
+  ]}
+  caption="The scheduler never executes jobs itself. It only turns 'due' into 'enqueued', which keeps the critical loop small and lets workers scale on their own."
+/>
+
+On each dispatch the scheduler inserts a run row (`job_id`, `scheduled_for`, `attempt`), enqueues it, and advances the job's `next_run_at` to the next cron occurrence, all inside one transaction or with an outbox, so a crash between "enqueued" and "advanced" can't silently skip or double-dispatch.
+
+## Deep dive
+
+### Finding due jobs without two schedulers grabbing the same one
+
+The naive loop is `SELECT … WHERE next_run_at <= now()`. Run it on two scheduler instances for availability and both pick the same rows: the double-invoice bug again. Three standard fixes:
+
+- **Row locking with skip.** `SELECT … WHERE next_run_at <= now() ORDER BY next_run_at LIMIT 500 FOR UPDATE SKIP LOCKED`. Each instance locks a batch; others skip locked rows instead of blocking. Simple, correct, and fine up to thousands of jobs per second on one Postgres primary.
+- **Partition ownership.** Hash `job_id` into N partitions; each scheduler shard holds a lease on a set of partitions (via etcd, ZooKeeper, or a lease table) and is the only one scanning them. Scales horizontally; rebalancing on shard death is leader election per partition.
+- **Time buckets.** Keep due jobs in per-minute buckets (a Redis sorted set scored by timestamp, or a hierarchical timing wheel in memory), so finding what's due is reading one bucket rather than range-scanning a 50M-row index.
+
+<TradeoffMatrix
+  id="05-distributed-job-scheduler-tradeoff"
+  lessonSlug="05-distributed-job-scheduler"
+  lang="en"
+  prompt="You need to dispatch about 2,000 due jobs per second at peak from a jobs table with 50M rows, with at least two scheduler instances for availability. How should schedulers find due jobs?"
+  options={[
+    { name: "Partition ownership with leases", summary: "Hash jobs into partitions; each scheduler shard leases a set and scans only those.", justification: "At 2,000 dispatches per second a single table scanned by every instance becomes a lock-contention hotspot. Hashing job_id into, say, 64 partitions and having each scheduler shard hold a lease on a subset means each shard scans only its own rows, no two shards ever see the same job, and capacity grows by adding shards. When a shard dies its lease expires and another shard takes the partitions. The cost is a coordination service for leases and a brief dispatch gap during rebalance, which the at-least-once design already tolerates.", correct: true },
+    { name: "Every instance polls with FOR UPDATE SKIP LOCKED", summary: "All schedulers scan the same table and skip rows locked by others.", justification: "This is correct and is the right starting point: SKIP LOCKED guarantees two instances never dispatch the same row in the same moment, with no extra infrastructure. At 2,000 per second against one 50M-row table, though, every instance contends on the same index range at the top of the hour, and the single primary becomes the ceiling. Use it until measurements show contention, then move to partition ownership." },
+    { name: "One leader scheduler, others on standby", summary: "Elect a single active scheduler; standbys take over if it dies.", justification: "Leader election prevents double dispatch simply, and many schedulers start this way. But one active process must scan and enqueue everything, so its throughput is the system's ceiling, and failover leaves a gap while the new leader is elected. At 2,000 per second with a 208k top-of-hour burst, a single leader becomes the bottleneck exactly when it matters." },
+  ]}
+/>
+
+### Leases, heartbeats, and why duplicates are guaranteed
+
+A worker that pulls a run takes a **lease**: the run is invisible to other workers until the lease expires (SQS calls this the visibility timeout). Long jobs heartbeat to extend the lease. If the worker crashes, the lease lapses and the run is redelivered: that is how "no lost jobs" is achieved.
+
+The same mechanism guarantees duplicates. A worker can be *alive but paused* (a 40-second GC pause, a network partition) while its 30-second lease expires. A second worker takes the run and executes it. Then the first worker wakes up and finishes too. No lease length fixes this, for the same reason no failover timeout distinguishes "dead" from "slow."
+
+<Inset kind="why" lang="en">
+Why not just use a distributed lock so only one worker runs a job? Because a lock is a lease with a timeout, and a paused holder doesn't know its lease expired. Martin Kleppmann's analysis of Redis-based locking shows the general problem: any lock that can expire can be held by two clients at once from the clients' point of view. The fix moves to the *resource*: every run carries a **fencing token**, a monotonically increasing number such as the attempt counter, and the side effect rejects writes with a token lower than one it has already seen. Where you can't fence the resource (an external email API), you pass an **idempotency key** such as `job_id + scheduled_for`, so the provider deduplicates. The scheduler guarantees at-least-once; the job makes it effectively-once.
+</Inset>
+
+### Recurring schedules: time zones, DST, and misfires
+
+Computing the next run time is harder than parsing five cron fields:
+
+- **Time zones and DST.** "Every day at 02:30 Europe/Berlin" has no 02:30 on the spring-forward day and two of them on the fall-back day. Store the schedule with its IANA time zone, compute the next occurrence in that zone, store it as UTC, and pick an explicit rule for the skipped and repeated hour.
+- **Misfire policy.** If the scheduler was down for three hours, an hourly job missed three runs. The job declares what to do: *fire once now* (most jobs), *fire every missed run* (billing periods, each of which matters), or *skip to the next* (a cache warmer). Quartz and Kubernetes CronJobs expose exactly these choices.
+- **Overlap policy.** If the 10:00 run is still going at 11:00, do you start another, skip, or queue it? Kubernetes calls this `concurrencyPolicy: Allow | Forbid | Replace`.
+
+### The top of the hour
+
+Two hundred thousand jobs due in the same second will overrun any queue and any downstream API they call. Defenses, in order of impact:
+
+- **Jitter at creation.** When a user writes `0 * * * *` and doesn't need exact timing, the system silently spreads the job across a window (Jenkins' `H` syntax does this by hashing the job name). This flattens the spike before it exists.
+- **Dispatch rate limits and priority queues.** Latency-sensitive jobs go to a high-priority queue; bulk reports wait.
+- **Per-tenant quotas.** Fair scheduling so one tenant with 100k hourly jobs can't consume every worker at :00.
+
+<Infographic
+  svg={topOfHourSpike}
+  label="Column chart of peak dispatch rate at the top of the hour for 208,000 jobs scheduled at minute zero: with no jitter 208,000 per second, spread over 10 seconds 20,800 per second, spread over 60 seconds about 3,470 per second."
+  caption="Jitter doesn't reduce work, it spreads it. Spreading the same jobs across a minute cuts peak dispatch about 60×, which turns a burst no queue can absorb into steady load."
+  hue="var(--d-compute)"
+/>
+
+<Quiz
+  id="05-distributed-job-scheduler-quiz-1"
+  lessonSlug="05-distributed-job-scheduler"
+  lang="en"
+  question="A worker takes a 'charge subscription' run with a 30 s lease. It hits a 45 s GC pause. Another worker picks up the redelivered run and charges the card. The first worker resumes and charges again. What is the correct fix?"
+  choices={[
+    { label: "Make the side effect idempotent: send an idempotency key such as job_id plus scheduled_for to the payment provider, or fence writes with the attempt number, so the second charge is rejected.", correct: true },
+    { label: "Raise the lease to 10 minutes so it never expires during a pause.", misconception: "Any finite lease can be outlived by a pause or partition, and a long lease delays recovery when a worker really dies. No lease length gives exactly-once; idempotency at the side effect does." },
+    { label: "Use a Redis distributed lock around the charge.", misconception: "A lock with an expiry has the same flaw as the lease: a paused holder doesn't know it lost the lock. Only a check at the resource, a fencing token or idempotency key, makes the duplicate harmless." },
+    { label: "Disable retries and redelivery for payment jobs.", misconception: "Then a worker crash silently loses the charge, which is the job that runs zero times. At-least-once plus idempotency beats at-most-once for anything that matters." },
+  ]}
+/>
+
+<Quiz
+  id="05-distributed-job-scheduler-quiz-2"
+  lessonSlug="05-distributed-job-scheduler"
+  lang="en"
+  question="An hourly job's scheduler was down from 09:10 to 12:20. It recomputes billing for the previous hour. Which misfire policy fits?"
+  choices={[
+    { label: "Fire every missed run (10:00, 11:00, 12:00), each with its own scheduled_for, because each hour's billing is a distinct unit of work.", correct: true },
+    { label: "Fire once now and continue, the default for most jobs.", misconception: "Fire-once fits jobs where only the latest state matters, like a cache refresh. Billing per hour needs every period computed; collapsing three runs into one loses two hours of billing." },
+    { label: "Skip to the next scheduled run at 13:00.", misconception: "Skipping silently loses three billing periods. That is the run-zero-times failure the scheduler exists to prevent." },
+    { label: "Fire all three at once with the same scheduled_for of 12:20.", misconception: "Each catch-up run must carry its own scheduled_for so the job knows which hour to bill and the idempotency key stays unique per period. Using one timestamp makes them duplicates of each other." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-distributed-job-scheduler-metaphor-1"
+  lessonSlug="05-distributed-job-scheduler"
+  lang="en"
+  setup="A paused worker can't know its lease expired, so two workers may run the same job. The resource protects itself by rejecting any write carrying a _______ lower than one it has already seen."
+  accepted={["fencing token", "fencing tokens", "fence token", "token"]}
+  canonical="fencing token"
+  explanation="A fencing token is a monotonically increasing number (for example the run's attempt counter) attached to every write. The storage or downstream service remembers the highest token it has accepted and rejects older ones, so a worker that woke up after losing its lease can't apply a stale duplicate."
+/>
+
+## Bottlenecks & tradeoffs
+
+- **The jobs index** is the hot spot: partition it by job hash and by time bucket before scanning 50M rows every second becomes the ceiling.
+- **Exactly-once is a property of the job, not the scheduler.** Publish this in the API contract: every run has a stable `run_id` and `attempt` number; jobs must be idempotent on `run_id`.
+- **Trigger precision vs. load:** sub-second precision at the top of the hour costs enormous peak capacity. Most jobs don't need it; make precision opt-in and jitter the default.
+- **Push vs. pull to workers:** a queue with leases (pull) gives back-pressure and survives worker crashes; pushing HTTP calls directly from the scheduler couples dispatch latency to the slowest job.
+
+</Explanation>
+
+<KeyTakeaway>Store next_run_at, let one owner per partition dispatch, lease runs to workers. Duplicates are guaranteed, so fence or key every side effect. Plan for the top of the hour, not the average.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="05-distributed-job-scheduler-retrieval"
+  lang="en"
+  questions={[
+    { q: "Sketch the scheduler's architecture and explain how it avoids both lost jobs and double dispatch.", a: "API writes job definitions with a next_run_at; a partitioned jobs store indexes due times; scheduler shards each own a set of partitions (via leases) or use FOR UPDATE SKIP LOCKED so no two dispatch the same row; dispatch inserts a run row, enqueues it, and advances next_run_at in one transaction or via outbox; workers pull runs under a lease and heartbeat; outcomes go to a runs table. Lost jobs are prevented because an expired lease redelivers the run; double dispatch is prevented by single ownership of each partition or row lock." },
+    { q: "Why is execution at-least-once, and how do jobs become effectively-once?", a: "Because a worker can be paused or partitioned while its lease expires, so a second worker legitimately runs the same job, and the first may still finish. No lease length or distributed lock fixes this, since a paused holder can't know it lost the lease. The fix is at the side effect: a fencing token such as the attempt number that the resource checks, or an idempotency key such as job_id plus scheduled_for passed to external APIs so they deduplicate." },
+    { q: "What makes recurring schedules and peak load hard, and how do you handle them?", a: "Cron in a time zone has skipped and repeated hours at DST changes, so store the IANA zone, compute in it, store UTC, and choose an explicit rule. After downtime, each job declares a misfire policy: fire once, fire every missed run (each with its own scheduled_for), or skip. An overlap policy decides whether a still-running job gets a concurrent run. The top of the hour concentrates load hugely, so jitter non-critical schedules at creation, use priority queues and dispatch rate limits, and enforce per-tenant quotas." },
+  ]}
+/>
+
+<Recap lang="en">
+A distributed job scheduler exists to rule out both failures from the hook: the job that **runs zero times** (a single cron host that was down) and the job that **runs twice** (two cron hosts "for redundancy"). The design separates **job definitions** with a `next_run_at`, **scheduler shards** that turn due jobs into queued runs, and **workers** that execute under a **lease**. Finding due jobs safely uses `FOR UPDATE SKIP LOCKED` at small scale and **partition ownership with leases** or **time buckets** at large scale, and each dispatch records a run and advances the schedule atomically. Leases make lost jobs impossible, because an expired lease redelivers, and for the same reason make **duplicates inevitable**: a paused worker outlives its lease. So the scheduler promises **at-least-once**, and each job becomes effectively-once with a **fencing token** or an **idempotency key** at the side effect. Recurring schedules need IANA time zones with explicit **DST** rules, a per-job **misfire policy**, and an **overlap policy**. The real capacity constraint is the **top of the hour**, handled with jitter, priority queues, and per-tenant quotas. With these in place, the billing team's monthly run happens exactly when a lease is held, and a second attempt hits an idempotency key instead of a customer's card.
+</Recap>
