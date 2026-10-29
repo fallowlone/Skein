@@ -1,4 +1,5 @@
 import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import IslandErrorBoundary from "~/components/lesson/IslandErrorBoundary";
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { useLayoutEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
@@ -54,7 +55,7 @@ const labels = {
   },
 };
 
-export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questions }: Props) {
+function RetrievalDrawerInner({ pieceSlug, id, lessonKey, lang, questions }: Props) {
   const slug = pieceSlug ?? id ?? "";
   const storageLessonKey = lessonKey ?? slug;
   const storedResponses = readResponses(storageLessonKey);
@@ -226,5 +227,13 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
         </ShadcnButton>
       </footer>
     </section>
+  );
+}
+
+export default function RetrievalDrawer(props: Props) {
+  return (
+    <IslandErrorBoundary lang={props.lang}>
+      <RetrievalDrawerInner {...props} />
+    </IslandErrorBoundary>
   );
 }

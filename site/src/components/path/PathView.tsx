@@ -6,7 +6,7 @@ import { Button as ShadcnButton } from "~/components/ui/button";
 //   TodayFocus · 01 · GOAL · 02 · INSTRUMENT (deadline) · 03 · PATH (next units)
 //   04 · INSTRUMENT (concept-mastery map) · Advanced knobs.
 // Owns the two reused modals: PathConfigDrawer, UnitProbe.
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
   effectiveKnowledge, config, content, computePath,
@@ -73,6 +73,21 @@ export default function PathView({ lang }: { lang: Locale }) {
   useEffect(() => { document.getElementById("plan-skeleton")?.remove(); }, []);
   const [modal, setModal] = useState<null | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
+  // The config drawer is opened imperatively (not via DialogTrigger), so
+  // radix has no trigger to return focus to on close. Capture the opener
+  // explicitly and restore focus once the closed state commits — the effect
+  // runs after the drawer's own unmount cleanup, so this wins deterministically.
+  const configOpener = useRef<HTMLElement | null>(null);
+  const openConfig = () => {
+    configOpener.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setModal("config");
+  };
+  useEffect(() => {
+    if (modal !== null) return;
+    configOpener.current?.focus();
+    configOpener.current = null;
+  }, [modal]);
 
   const k = effectiveKnowledge();        // subscribe
   const cfg = config.value;         // subscribe
@@ -155,7 +170,7 @@ export default function PathView({ lang }: { lang: Locale }) {
 
       {/* Advanced knobs */}
       <section class="screen-section">
-        <AdvancedKnobs lang={lang} onGraphEdits={() => setModal("config")} />
+        <AdvancedKnobs lang={lang} onGraphEdits={openConfig} />
       </section>
 
       {/* Start over — same two-call reset the account screen performs; resetAll alone

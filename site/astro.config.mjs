@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { createLogger } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
+import { unified } from "@astrojs/markdown-remark";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
 import sitemap from "@astrojs/sitemap";
@@ -59,7 +60,7 @@ export default defineConfig({
     // handles the TS syntax; output is unchanged.
     // onnxruntime-web ships prebuilt minified dist (also >500KB): no JSX in
     // it either, same note, same treatment.
-    preact({ compat: true, exclude: [/english\/data\/vocab-b[12]\.ts/, /node_modules\/onnxruntime-web\/dist\//] }),
+    preact({ compat: true, exclude: [/english\/data\/vocab-b[12]\.ts/, /\.vite\/deps\/radix-ui\.js/, /node_modules\/onnxruntime-web\/dist\//] }),
     sitemap({
       filter: (page) => !page.includes("/admin"),
       customPages: Object.values(lessonIndex).map(
@@ -68,7 +69,7 @@ export default defineConfig({
     }),
   ],
   markdown: {
-    remarkPlugins: [remarkRetrievalLessonKey],
+    processor: unified({ remarkPlugins: [remarkRetrievalLessonKey] }),
     shikiConfig: {
       themes: { light: "github-light", dark: "github-dark" },
       wrap: true,

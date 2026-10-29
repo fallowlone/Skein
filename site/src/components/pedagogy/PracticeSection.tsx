@@ -1,4 +1,5 @@
 import { sanitizeAuthoredHtml } from "~/lib/sanitize";
+import IslandErrorBoundary from "~/components/lesson/IslandErrorBoundary";
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 import { Input as ShadcnInput } from "~/components/ui/input";
@@ -153,7 +154,7 @@ const SEVERITY_LABEL: Record<string, { en: string; ru: string }> = {
   simplification: { en: "Simpler design", ru: "Проще можно" },
 };
 
-export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
+function PracticeSectionInner({ lang, lessonKey, tasks }: Props) {
   const ordered = orderTasks(tasks);
   // Lazy-seed spaced-repetition cards from this lesson's practice on first visit.
   useLayoutEffect(() => {
@@ -879,4 +880,12 @@ function Incident({ lang, lessonKey, task, steps, onChange }: {
 
 function Loading({ lang }: { lang: Locale }) {
   return <div class="text-xs text-muted py-3">{tt(lang, "Loading runtime…", "Загружаю среду…")}</div>;
+}
+
+export default function PracticeSection(props: Props) {
+  return (
+    <IslandErrorBoundary lang={props.lang}>
+      <PracticeSectionInner {...props} />
+    </IslandErrorBoundary>
+  );
 }

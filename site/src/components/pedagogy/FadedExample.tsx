@@ -1,5 +1,6 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Input as ShadcnInput } from "~/components/ui/input";
+import IslandErrorBoundary from "~/components/lesson/IslandErrorBoundary";
 import { h, type ComponentChildren } from "preact";
 import { sanitizeAuthoredHtml } from "~/lib/sanitize";
 import { useState } from "preact/hooks";
@@ -61,7 +62,7 @@ function check(expected: string | RegExp, actual: string): boolean {
   return expected.test(trimmed);
 }
 
-export default function FadedExample({
+function FadedExampleInner({
   id,
   pieceSlug,
   lang,
@@ -176,5 +177,13 @@ export default function FadedExample({
         </>
       )}
     </section>
+  );
+}
+
+export default function FadedExample(props: Props) {
+  return (
+    <IslandErrorBoundary lang={props.lang}>
+      <FadedExampleInner {...props} />
+    </IslandErrorBoundary>
   );
 }

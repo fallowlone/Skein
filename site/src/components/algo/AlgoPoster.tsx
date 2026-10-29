@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "preact/hooks";
+import IslandErrorBoundary from "~/components/lesson/IslandErrorBoundary";
 import { PATTERNS, clamp01, type PatternKind } from "./poster-patterns";
 
 export type PosterStep = { caption: string; state: string; log: string };
@@ -101,7 +102,7 @@ function hiTitle(title: string, his?: string[]) {
   );
 }
 
-export default function AlgoPoster(props: Props) {
+function AlgoPosterInner(props: Props) {
   const { id, lang, steps, minis, data, pattern } = props;
   const ui = UI[lang];
   const rootRef = useRef<HTMLElement>(null);
@@ -300,5 +301,13 @@ export default function AlgoPoster(props: Props) {
       </div>
       <div class="ap-footer"><span>{props.takeaway}</span><span>{props.src}</span></div>
     </figure>
+  );
+}
+
+export default function AlgoPoster(props: Props) {
+  return (
+    <IslandErrorBoundary lang={props.lang}>
+      <AlgoPosterInner {...props} />
+    </IslandErrorBoundary>
   );
 }
