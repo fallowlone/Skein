@@ -1,7 +1,7 @@
 # Autonomous continuation — open atlas migration
 
-You are continuing the open-atlas content migration in the `awesome-everything` repo
-(Astro 5 curriculum site under `site/`). Work autonomously; do not wait for user
+You are continuing the open-atlas content migration in the `skein` repo
+(Astro 7 curriculum site under `site/`). Work autonomously; do not wait for user
 input. The user has granted full autonomy — decide and proceed, do not ask.
 
 ## Working location
@@ -123,9 +123,9 @@ commit. Reference reconcile commits: `9b312c6` (07-sharding), `0b87822`
 - Unrelated uncommitted files exist in the main working tree (`vitest.config.ts`,
   `lesson-preview.astro`, `topic-preview.astro`, `.claude/launch.json`, worktree
   dirs) — never stage them.
-- `bunx vitest run` has 3 pre-existing failures (user-state, exercise-counts)
-  unrelated to this work — ignore; the build linter (errors 0, warnings 0) is the
-  gate.
+- `bun run test` (vitest) is green and is a CI gate alongside the build linter —
+  see the `gates` job in `.github/workflows/deploy.yml`. Do not ignore unit
+  failures; the old "3 pre-existing failures" note predates the M2 suite.
 - Update `HANDOFF.md` whenever a pillar or phase completes (and at every context
   rotation).
 - **Context rotation:** at ~75-80% context, stop at a unit boundary — update

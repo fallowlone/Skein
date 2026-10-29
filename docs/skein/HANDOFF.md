@@ -274,9 +274,9 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Verify / preview
 
-- Build: `cd site && bun run build` (expect ~484 pages, lint clean).
+- Build: `cd site && bun run build` (expect ~2000 pages, lint clean).
 - Preview: launch the `atlas-preview` server (Claude Preview); it serves `site/dist`
-  on port 4400. Home at `/en/`, lesson shell at `/lesson-preview/`.
+  on port 4400. Home at `/en/`. (The old `/lesson-preview/` shell route is gone.)
 
 ## ⚠️ CONCURRENCY COLLISION — 2026-05-19, networking/01-physical-link
 
