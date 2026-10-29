@@ -4,6 +4,7 @@ import { getUserById, releaseAiUse, reserveAiUse } from "../../lib/db";
 import { COACH_AI_FEATURE, coachConfig, readBodyBounded, resolveCoachAccess, utcMonthPeriod } from "../../lib/coach";
 import { termsCurrent } from "../../lib/db";
 import { error, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 
 type Lang = "en" | "ru";
 type Critique = {
@@ -134,11 +135,11 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
 
   const raw = await readBodyBounded(ctx.request, 24 * 1024);
   if (!raw) return error(413, "too_large");
-  if (raw.byteLength === 0) return error(400, "bad_json");
+  if (raw.byteLength === 0) return invalid("bad_json");
   let body: unknown;
-  try { body = JSON.parse(new TextDecoder().decode(raw)); } catch { return error(400, "bad_json"); }
+  try { body = JSON.parse(new TextDecoder().decode(raw)); } catch { return invalid("bad_json"); }
   const input = parseInput(body);
-  if (!input) return error(400, "bad_input");
+  if (!input) return invalid("bad_input");
 
   const period = utcMonthPeriod();
   const used = await reserveAiUse(ctx.env.DB, userId, COACH_AI_FEATURE, period, cfg.monthlyRequests, Date.now());

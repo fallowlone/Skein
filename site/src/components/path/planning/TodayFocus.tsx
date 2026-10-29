@@ -71,22 +71,28 @@ type LessonGraphIndex = Record<string, { concepts: string[]; prereqConcepts: str
 
 export default function TodayFocus({ lang }: { lang: Locale }) {
   const t = L[lang];
-  // Lazily code-split the per-lesson task index (it is ~0.5MB; dynamic import keeps it out of the
-  // main planning bundle). Until it loads, the "do now" list shows unit-level "start" rows; once
-  // loaded, lead units upgrade to the specific next task at the learner's adaptive tier.
+  // Lazily fetched per-lesson indexes (task index ~0.5MB, concept graph ~5.7MB) from the
+  // static /data/path/*.json assets — fetched on demand, never bundled (bundling them
+  // dominated the client build). Until they load, the "do now" list shows unit-level
+  // "start" rows; once loaded, lead units upgrade to the specific next task at the
+  // learner's adaptive tier.
   const [taskIndex, setTaskIndex] = useState<LessonTaskIndex | null>(null);
   const [lessonGraph, setLessonGraph] = useState<LessonGraphIndex | null>(null);
   useEffect(() => {
     let alive = true;
-    // Relative path (not the ~ alias) so the dynamic import resolves identically in dev, build, and test.
-    import("../../../content/path/lesson-tasks.json")
-      .then((m) => { if (alive) setTaskIndex(m.default as LessonTaskIndex); })
+    const load = async (url: string): Promise<unknown> => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+      return res.json();
+    };
+    load("/data/path/lesson-tasks.json")
+      .then((d) => { if (alive) setTaskIndex(d as LessonTaskIndex); })
       .catch((e) => {
         // index is an enhancement — failure just leaves the baseline rows; surface it in dev only
         if (import.meta.env.DEV) console.warn("[TodayFocus] lesson-tasks.json failed to load; do-now task rows disabled:", e);
       });
-    import("../../../content/path/lesson-graph.json")
-      .then((m) => { if (alive) setLessonGraph(m.default as LessonGraphIndex); })
+    load("/data/path/lesson-graph.json")
+      .then((d) => { if (alive) setLessonGraph(d as LessonGraphIndex); })
       .catch((e) => {
         if (import.meta.env.DEV) console.warn("[TodayFocus] lesson-graph.json failed to load; do-now falls back to unit order:", e);
       });

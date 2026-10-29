@@ -2,12 +2,13 @@
 import type { Env, RequestData } from "../../lib/types";
 import { loadLesson, parseLessonPath, requiredExercises } from "../../lib/lesson-access";
 import { error, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 
 export { parseLessonPath } from "../../lib/lesson-access";
 
 export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const path = parseLessonPath(ctx.params.path as string | string[] | undefined);
-  if (!path) return error(400, "bad_lesson_path");
+  if (!path) return invalid("bad_lesson_path");
 
   const result = await loadLesson(ctx.env, path);
   if (!result.ok) return error(result.status, result.code);

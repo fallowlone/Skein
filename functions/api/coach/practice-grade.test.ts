@@ -86,7 +86,7 @@ describe("managed Coach grading", () => {
     const { env, user, token } = await setup();
     const provider = vi.spyOn(globalThis, "fetch");
     const nullResponse = await onRequestPost({ request: rawRequest("null"), env, data: { userId: user.id, githubAccessToken: token } } as any);
-    expect(nullResponse.status).toBe(400);
+    expect(nullResponse.status).toBe(422);
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {

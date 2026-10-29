@@ -1,0 +1,215 @@
+---
+slug: "05-collaborative-editor"
+lang: en
+track: "system-design-cases"
+unit: "04-location-realtime"
+order: 5
+title: "Design a collaborative editor"
+summary: "Design Google Docs-style co-editing: apply edits locally first, make concurrent edits converge on every replica with operational transformation or a CRDT, route each document to one session owner, and persist an op log with snapshots."
+estMin: 32
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - collaborative-editing
+  - operational-transform
+  - crdt
+  - convergence
+  - op-log-snapshot
+  - presence
+prereqs:
+  - 02-social-feed/03-chat-system
+  - 04-data-distribution/04-cap-and-pacelc
+sources:
+  - https://www.inkandswitch.com/local-first/
+  - https://martin.kleppmann.com/2020/07/06/crdt-hard-parts-hydra.html
+  - https://docs.yjs.dev/
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import Infographic from "~/components/diagram/Infographic.astro";
+import otVsCrdt from "./infographics/ot-vs-crdt.svg?raw";
+
+<Hook>
+The first version of a team wiki saved the whole document on every keystroke pause. Two people edited the same page; the later save won and silently erased the other's paragraph. Version two sent *operations* instead: "insert 'X' at position 1", "delete position 2". Now nothing was erased, but documents slowly drifted apart: two people looking at the same page saw different text, and reloading picked whichever copy the server had. Both versions failed the same requirement, stated in one word: every replica of a document must **converge** to the same content, no matter in what order concurrent edits arrive.
+</Hook>
+
+<Crux>Concurrent edits must converge on every replica. OT transforms positions through a central order; CRDTs give each character an ID so merges commute.</Crux>
+
+<Explanation>
+
+## Requirements
+
+Functional:
+
+- Many users edit the same document at once and see each other's changes in near real time, plus cursors and selections (presence).
+- Typing feels instant: a local keystroke appears with zero network round trip.
+- Edits made offline or during a dropped connection merge when the client reconnects.
+- Version history: view and restore earlier states.
+
+Non-functional:
+
+- **Convergence**: once all edits are delivered, all replicas show identical content.
+- **Intention preservation**: a merged edit does what its author meant (delete the character they selected, not whatever now sits at that index).
+- Remote edits visible within ~100–200 ms; durable once acknowledged.
+- Scale to millions of documents; a single document typically has a few to ~100 concurrent editors.
+
+## Estimation
+
+Assume 5M documents open at peak with an average of 2 active editors each.
+
+- An active typist produces roughly 3–5 operations per second; batching keystrokes into 50–100 ms frames brings that to about 10 messages/s per editor.
+- 10M editors × 10 messages/s ≈ **100M small messages/s** globally, but each one only matters within its own document. The document is the natural shard key: no operation ever needs another document.
+- Each operation is tens of bytes. Bandwidth is not the problem; ordering and merging within a document is.
+
+## High-level design
+
+<FlowDiagram
+  label="Collaborative editor architecture: each client holds a local replica and applies its own edits immediately; edits travel over a WebSocket gateway to the document session service, which owns a document via consistent hashing; the session merges and orders operations, appends them to a per-document op log, broadcasts them to other clients, and periodically writes snapshots; presence such as cursors goes over a separate ephemeral channel."
+  perRow={5}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "client", label: "Client replica", sub: "apply locally first" },
+    { id: "gw", label: "WebSocket gateway", sub: "route by doc_id" },
+    { id: "session", label: "Doc session", sub: "one owner per doc" },
+    { id: "log", label: "Op log", sub: "append-only per doc" },
+    { id: "snap", label: "Snapshots", sub: "compaction, history" },
+  ]}
+  edges={[
+    { from: "client", to: "gw", label: "ops" },
+    { from: "gw", to: "session" },
+    { from: "session", to: "log", label: "append" },
+    { from: "log", to: "snap", label: "every N ops" },
+    { from: "session", to: "client", label: "broadcast" },
+  ]}
+  caption="Routing every editor of a document to the same session server gives that document a single place where operations are ordered and merged, the way a chat room has one owner."
+/>
+
+Opening a document loads the latest snapshot plus the op-log tail after it, then subscribes to the session. The session is the owner of order for that document; the op log is the durable truth; snapshots are a cache over the log that bound load time and power version history.
+
+## Deep dive
+
+### Why index-based operations diverge
+
+Start with the document `abc`. At the same moment, Alice inserts `X` at position 1 (wanting `aXbc`), and Bob deletes position 2 (the `c`, wanting `ab`). Each applies their own edit locally, then receives the other's.
+
+- Alice has `aXbc`, receives "delete 2", deletes the `b`: **`aXc`**.
+- Bob has `ab`, receives "insert X at 1": **`aXb`**.
+
+Two replicas, two different documents, and Alice's copy lost the wrong character. Positions are only meaningful relative to the document state they were computed against. Both families of solutions fix exactly this.
+
+### Operational transformation (OT)
+
+OT keeps index-based operations but **transforms** each incoming operation against the concurrent operations it didn't know about. In the example, Bob's "delete 2" is transformed against Alice's "insert at 1": the insert landed before position 2, so the delete shifts to position 3 and removes the `c`. Both replicas end at `aXb`, and Bob's intent survived.
+
+Production OT (Google Docs, and the Jupiter algorithm it descends from) relies on a **central server that defines a single order**. Each client operation carries the server revision it was based on. The server transforms it against every operation committed since that revision, assigns the next revision, and broadcasts it. The client keeps its unacknowledged operations in a pending buffer and transforms incoming server operations against them. This works well and the messages are compact, but writing correct transform functions for a rich document model (text, formatting, tables, lists) is notoriously hard, and OT without a central server needs extra transformation properties that many published algorithms got wrong.
+
+### CRDTs
+
+A **CRDT** (conflict-free replicated data type) avoids positions entirely. Every inserted character gets a globally unique ID, such as `(replicaId, counter)`, and an insert says "put `X` after the character with ID `a1`." Deletes mark a character as a **tombstone** instead of removing it, so later inserts that reference it still resolve. Because operations refer to stable IDs rather than shifting indices, they **commute**: any replica applying the same set of operations in any order reaches the same state. No central ordering is required, which is what makes CRDTs the basis of *local-first* software that works offline for days and syncs peer to peer. Yjs and Automerge are the widely used implementations.
+
+The costs are metadata and cleanup: each character carries an ID, tombstones accumulate, and garbage-collecting them safely requires knowing every replica has seen the delete. Modern implementations compress runs of consecutive characters heavily, so the overhead is far lower than "an ID per character" suggests, but it is not zero.
+
+<Infographic
+  svg={otVsCrdt}
+  label="Comparison of operational transformation and CRDTs. OT: index-based operations, a central server orders and transforms them, compact messages, hard-to-verify transform functions, offline limited. CRDT: each element has a unique ID, operations commute so order does not matter, works peer to peer and offline, carries ID and tombstone metadata."
+  caption="Both guarantee convergence. OT pays in algorithm complexity and a required central order; CRDTs pay in metadata and tombstone cleanup."
+  hue="var(--d-net)"
+/>
+
+<TradeoffMatrix
+  id="05-collaborative-editor-tradeoff"
+  lessonSlug="05-collaborative-editor"
+  lang="en"
+  prompt="You are building a notes app for field engineers who edit shared checklists on phones in places with no connectivity for days, then sync. Which merge approach fits?"
+  options={[
+    { name: "CRDT (for example Yjs or Automerge)", summary: "Each element has a unique ID; operations commute and merge in any order.", justification: "Days of offline editing means replicas accumulate large independent histories that must merge without a server ordering them as they happen. A CRDT is designed for exactly this: every replica applies the union of operations in any order and converges, and two phones can even sync directly. The metadata overhead is modest for checklist-sized documents, and tombstone cleanup can run on the server once all known devices have synced.", correct: true },
+    { name: "Server-ordered OT", summary: "A central server orders and transforms every operation against concurrent ones.", justification: "OT works well when clients are online and operations reach the server within seconds, as in a browser editor. After days offline, a client's long run of operations must be transformed against a long run of server operations, which is expensive and exactly where transform-function bugs show up. OT also gives nothing for device-to-device sync without the server. It's the wrong fit for this offline-first case." },
+    { name: "Last-writer-wins per document", summary: "Keep whichever full document version has the latest timestamp.", justification: "Simple, and it guarantees convergence, but it converges by throwing work away: whichever engineer synced last overwrites everyone else's checklist edits. That is the wiki bug from the hook. LWW is acceptable per field for metadata like a title, never for the body of a shared document." },
+  ]}
+/>
+
+### Persistence: op log plus snapshots
+
+The durable model is event sourcing applied to a document. Every operation the session accepts is appended to a per-document **op log** before it is acknowledged. Every N operations or M seconds, the session writes a **snapshot**. Loading a document reads the last snapshot and replays the tail; version history is a list of snapshots, with the log for fine-grained replay. Old log segments behind a retained snapshot can be compacted. Because everything for one document lives under one key, the log partitions trivially by `doc_id`.
+
+### Scaling and presence
+
+- **One session owner per document.** Gateways route by `doc_id` through consistent hashing or a lease table, so all editors of a document meet on one server. If that server dies, another takes the lease, loads snapshot plus log, and clients reconnect and resend unacknowledged operations, which is safe because operations are idempotent by ID.
+- **Hot documents.** A document with 10,000 viewers and 20 editors splits the paths: editors talk to the session, and viewers subscribe to a fan-out tier (pub/sub) that relays the committed stream.
+- **Presence is separate.** Cursors and selections change constantly, are useless a second later, and don't need durability. Send them over an ephemeral channel, throttle to ~10–20 updates per second, and never write them to the op log.
+
+<Inset kind="edgecase" lang="en">
+Convergence alone isn't enough. A CRDT can converge to a state nobody intended. If Alice types "hello" and Bob types "world" at the same position while offline, some algorithms interleave the characters as "hweolrllod": every replica agrees, and the result is garbage. Kleppmann's "CRDTs: the hard parts" covers this interleaving anomaly and the algorithms (such as Fugue, or YATA in Yjs) designed to keep each user's run of characters together. The general lesson: test merge semantics against what users expect, not only that replicas match.
+</Inset>
+
+<Quiz
+  id="05-collaborative-editor-quiz-1"
+  lessonSlug="05-collaborative-editor"
+  lang="en"
+  question="Document: 'abc'. Concurrently, A inserts 'X' at index 1 and B deletes index 2. Under OT, how must B's delete be transformed when applied after A's insert?"
+  choices={[
+    { label: "Shift it to index 3, because A's insert landed before index 2, so the character B meant ('c') moved one position right. Result: 'aXb'.", correct: true },
+    { label: "Leave it at index 2; positions are absolute.", misconception: "Index 2 in 'aXbc' is 'b', not the 'c' B deleted. Positions are only valid against the state they were computed on, which is the whole reason OT transforms them." },
+    { label: "Drop B's delete, since A's operation arrived first.", misconception: "Dropping concurrent operations breaks intention preservation: B's deletion would silently disappear. OT keeps both edits and adjusts positions so each still means what its author intended." },
+    { label: "Shift it to index 1, before A's insert.", misconception: "An insert before the target pushes the target right, not left. Moving the delete to index 1 would remove 'X' or 'a', neither of which B selected." },
+  ]}
+/>
+
+<Quiz
+  id="05-collaborative-editor-quiz-2"
+  lessonSlug="05-collaborative-editor"
+  lang="en"
+  question="Why should all editors of one document connect to the same session server?"
+  choices={[
+    { label: "It gives the document a single place to order and merge operations and append them to one log, while different documents still spread across servers.", correct: true },
+    { label: "Because WebSockets can't cross servers.", misconception: "Gateways can relay WebSocket traffic between servers. The reason is ordering: one owner per document gives it one authoritative sequence of operations and one log writer." },
+    { label: "To reduce total bandwidth.", misconception: "Bandwidth is tiny, tens of bytes per operation. Co-locating a document's editors is about ordering and merging in one place, not saving bytes." },
+    { label: "It is required for CRDTs to converge.", misconception: "CRDTs converge without any central order; that's their defining property. Session ownership still helps them by giving one log writer and one broadcast point, but it isn't what makes them converge." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-collaborative-editor-metaphor-1"
+  lessonSlug="05-collaborative-editor"
+  lang="en"
+  setup="A CRDT deletes a character by marking it as a _______ rather than removing it, so later inserts that reference its ID still know where to go."
+  accepted={["tombstone", "tombstones", "tombstoned"]}
+  canonical="tombstone"
+  explanation="A tombstone keeps a deleted element's ID in the structure, hidden from the visible text. Concurrent inserts that say 'after ID a1' still resolve after a1 is deleted. The price is accumulated metadata that can only be garbage-collected once every replica has seen the delete."
+/>
+
+## Bottlenecks & tradeoffs
+
+- **OT vs CRDT** is the central decision: OT with a central server for always-online browser editing and compact ops; CRDTs for offline-first, peer-to-peer, or multi-device sync, accepting metadata overhead.
+- **The session owner** is a per-document single point of ordering; keep failover fast (lease plus snapshot plus log replay) and make client resends idempotent.
+- **Load time** grows with log length; snapshot frequency trades write cost against open latency.
+- **Rich content** (tables, comments, formatting) multiplies the merge cases. Model the document as a tree of CRDT types or define OT transforms per node type, and test with randomized concurrent edits (fuzzing) that assert convergence.
+
+</Explanation>
+
+<KeyTakeaway>Apply edits locally, then merge so replicas converge: OT transforms positions through a server's order, CRDTs use IDs so ops commute. One session per doc; op log plus snapshots.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="05-collaborative-editor-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why do naive index-based edit operations diverge, and what two properties must a collaborative editor guarantee?", a: "An index is only meaningful against the document state it was computed on. If one user inserts before a position while another deletes at that position, applying the operations in different orders on different replicas changes which character each index points to, so replicas end with different text and the wrong character may be deleted. The editor must guarantee convergence (all replicas identical once all operations are delivered) and intention preservation (each merged edit does what its author meant)." },
+    { q: "Compare operational transformation and CRDTs.", a: "OT keeps index-based operations and transforms each incoming one against concurrent ones it didn't see; production OT uses a central server that defines a single order and assigns revisions, with clients buffering unacknowledged ops. It is compact but transform functions for rich documents are hard to get right, and it needs the server. CRDTs give each element a unique ID and reference neighbors by ID, deletes become tombstones, so operations commute and any delivery order converges, enabling offline-first and peer-to-peer sync. The costs are per-element metadata, tombstone garbage collection, and anomalies like interleaving that algorithm choice must address." },
+    { q: "How do you persist and scale a collaborative editor?", a: "Treat the document as an event log: append every accepted operation to a per-document op log before acknowledging, write periodic snapshots, and load by reading the last snapshot plus the log tail; history is snapshots plus log. Shard by doc_id and route all editors of a document to one session owner via consistent hashing or a lease, which orders and broadcasts; on owner failure another takes the lease and clients resend idempotent ops. Split hot documents into an editor path and a pub/sub fan-out for viewers, and send presence (cursors) on a throttled ephemeral channel that is never persisted." },
+  ]}
+/>
+
+<Recap lang="en">
+A collaborative editor has one non-negotiable property: every replica must **converge** to the same content regardless of the order in which concurrent edits arrive, while **preserving each author's intention**. Saving whole documents fails by last-writer-wins, and naive index-based operations fail because a position means different things on replicas that applied edits in different orders. **Operational transformation** fixes this by transforming each incoming operation against the concurrent ones it missed, with a **central server** that defines the order; it is compact and proven in Google Docs but its transform functions are hard to get right. **CRDTs** fix it by giving every element a **unique ID** and turning deletes into **tombstones**, so operations commute and replicas converge in any order, which enables offline-first and peer-to-peer sync at the cost of metadata and tombstone cleanup, plus care about anomalies like interleaving. Around either choice the architecture is the same: clients **apply edits locally first**, a WebSocket gateway routes every editor of a document to **one session owner**, accepted operations go to a per-document **op log** with periodic **snapshots** for fast loads and history, hot documents get a separate viewer fan-out, and **presence** travels on a throttled ephemeral channel. The wiki in the hook needed exactly this: not a better save button, but a merge rule under which every copy ends up the same.
+</Recap>

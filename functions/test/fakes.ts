@@ -67,10 +67,10 @@ class FakeStmt {
     if (this.sql.startsWith("SELECT COUNT(*) AS count FROM sqlite_master")) {
       return { count: 0 } as T;
     }
-    if (this.sql.startsWith("SELECT * FROM users WHERE github_id")) {
+    if (this.sql.startsWith("SELECT id, github_id, login, nickname, avatar_url, terms_version, terms_accepted_at, created_at FROM users WHERE github_id")) {
       return (this.db.users.find(u => u.github_id === this.args[0]) ?? null) as T | null;
     }
-    if (this.sql.startsWith("SELECT * FROM users WHERE id")) {
+    if (this.sql.startsWith("SELECT id, github_id, login, nickname, avatar_url, terms_version, terms_accepted_at, created_at FROM users WHERE id")) {
       return (this.db.users.find(u => u.id === this.args[0]) ?? null) as T | null;
     }
     if (this.sql.startsWith("SELECT data FROM progress WHERE user_id")) {

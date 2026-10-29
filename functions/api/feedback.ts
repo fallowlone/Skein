@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../lib/types";
 import { json, error } from "../lib/response";
+import { invalid } from "../lib/validate";
 import { parseFeedbackBody } from "../lib/metrics";
 
 const MAX_BYTES = 8 * 1024;
@@ -10,7 +11,7 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   const text = await ctx.request.text();
   if (new TextEncoder().encode(text).length > MAX_BYTES) return error(413, "too_large");
   const parsed = parseFeedbackBody(text);
-  if (!parsed.ok) return error(400, parsed.code);
+  if (!parsed.ok) return invalid(parsed.code);
 
   await ctx.env.DB.prepare(
     "INSERT INTO feedback (ts, client_id, lesson, lang, text) VALUES (?, ?, ?, ?, ?)",

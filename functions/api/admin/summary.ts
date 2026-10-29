@@ -1,8 +1,12 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../../lib/types";
 import { json, error } from "../../lib/response";
+import { int, invalid } from "../../lib/validate";
 import { tokensEqual } from "../../lib/metrics";
 import { rateLimit } from "../../lib/ratelimit";
+
+const MAX_PER_PAGE = 100;
+const MAX_QUESTIONS = 100;
 
 interface ViewRow { lesson: string; track: string | null; views: number; uniq: number; }
 interface TimeRow { lesson: string; avg_seconds: number; samples: number; }
@@ -23,23 +27,44 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
   const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!provided || !tokensEqual(provided, token)) return error(401, "unauthorized");
 
+  const params = new URL(ctx.request.url).searchParams;
+  const page = int(params.get("page"), { min: 1, max: 1_000_000, code: "bad_page", fallback: 1 });
+  if (!page.ok) return invalid(page.code);
+  const perPage = int(params.get("per_page"), { min: 1, max: MAX_PER_PAGE, code: "bad_per_page", fallback: 50 });
+  if (!perPage.ok) return invalid(perPage.code);
+  const questionsLimit = int(params.get("questions_limit"), { min: 1, max: MAX_QUESTIONS, code: "bad_questions_limit", fallback: 20 });
+  if (!questionsLimit.ok) return invalid(questionsLimit.code);
+  const sinceRaw = params.get("since");
+  const since = sinceRaw === null
+    ? { ok: true as const, value: null as number | null }
+    : int(sinceRaw, { min: 0, max: 8_640_000_000_000_000, code: "bad_since" });
+  if (!since.ok) return invalid(since.code);
+
   const db = ctx.env.DB;
+  // Optional lower time bound so the operator can cap the aggregate scan
+  // (backed by idx_events_type_ts from migration 0010); absent = all time.
+  const timeFilter = since.value === null ? "" : " AND ts >= ?";
+  const timeArgs = since.value === null ? [] : [since.value];
+  const aggregate = <T>(sql: string) => {
+    const stmt = db.prepare(sql + timeFilter);
+    return (timeArgs.length > 0 ? stmt.bind(...timeArgs) : stmt).all<T>();
+  };
   const [views, times, practice, feedback] = await Promise.all([
-    db.prepare(
+    aggregate<ViewRow>(
       "SELECT lesson, track, COUNT(*) AS views, COUNT(DISTINCT client_id) AS uniq " +
       "FROM events WHERE type = 'lesson_view' GROUP BY lesson, track",
-    ).all<ViewRow>(),
-    db.prepare(
+    ),
+    aggregate<TimeRow>(
       "SELECT lesson, AVG(seconds) AS avg_seconds, COUNT(*) AS samples " +
       "FROM events WHERE type = 'lesson_time' GROUP BY lesson",
-    ).all<TimeRow>(),
-    db.prepare(
+    ),
+    aggregate<PracticeRow>(
       "SELECT lesson, COUNT(*) AS attempts, AVG(correct) AS correct_ratio " +
       "FROM events WHERE type = 'practice_result' GROUP BY lesson",
-    ).all<PracticeRow>(),
+    ),
     db.prepare(
-      "SELECT id, ts, lesson, lang, text FROM feedback ORDER BY ts DESC LIMIT 100",
-    ).all<FeedbackRow>(),
+      "SELECT id, ts, lesson, lang, text FROM feedback ORDER BY ts DESC LIMIT ?",
+    ).bind(questionsLimit.value).all<FeedbackRow>(),
   ]);
 
   const byLesson = new Map<string, {
@@ -73,6 +98,14 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
     e.correctRatio = Math.round(r.correct_ratio * 1000) / 1000;
   }
 
-  const lessons = [...byLesson.values()].sort((a, b) => b.views - a.views);
-  return json({ lessons, questions: feedback.results });
+  const all = [...byLesson.values()].sort((a, b) => b.views - a.views);
+  const start = (page.value - 1) * perPage.value;
+  const lessons = all.slice(start, start + perPage.value);
+  return json({
+    lessons,
+    page: page.value,
+    per_page: perPage.value,
+    totalLessons: all.length,
+    questions: feedback.results,
+  });
 };

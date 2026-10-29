@@ -18,6 +18,7 @@ import {
   verifyGithubWebhookSignature,
 } from "../../lib/coach";
 import { error, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 
 type SponsorUser = { id?: unknown; login?: unknown; type?: unknown };
 type SponsorTier = {
@@ -73,7 +74,7 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
 
   if (ctx.request.headers.get("X-GitHub-Event") !== "sponsorship") return error(400, "wrong_event");
   const deliveryId = ctx.request.headers.get("X-GitHub-Delivery")?.trim();
-  if (!deliveryId || deliveryId.length > 128) return error(400, "bad_delivery_id");
+  if (!deliveryId || deliveryId.length > 128) return invalid("bad_delivery_id");
 
   const raw = await readBodyBounded(ctx.request, 128 * 1024);
   if (!raw || raw.byteLength === 0) return error(413, "bad_payload_size");
@@ -91,13 +92,13 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
 
   let parsed: unknown;
   try { parsed = JSON.parse(new TextDecoder().decode(raw)); }
-  catch { return error(400, "bad_json"); }
-  if (!isObject(parsed)) return error(400, "bad_sponsorship");
+  catch { return invalid("bad_json"); }
+  if (!isObject(parsed)) return invalid("bad_sponsorship");
   const payload = parsed as Payload;
 
   const action = asString(payload.action, 40);
   const sponsorship = payload.sponsorship;
-  if (!action || !ACTIONS.has(action) || !sponsorship) return error(400, "bad_sponsorship");
+  if (!action || !ACTIONS.has(action) || !sponsorship) return invalid("bad_sponsorship");
 
   const sponsorshipId = asString(sponsorship.node_id, 128);
   const currentTier = parseTier(sponsorship.tier);
@@ -106,10 +107,10 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   if (
     !sponsorshipId || !currentTier || !privacyLevel || !sponsorableLogin ||
     sponsorableLogin.toLowerCase() !== cfg.sponsorableLogin.toLowerCase()
-  ) return error(400, "bad_sponsorship");
+  ) return invalid("bad_sponsorship");
 
   if (currentTier.tierId === ctx.env.GITHUB_SPONSORS_COURSE_TIER_ID) {
-    if (!currentTier.isOneTime || currentTier.monthlyPriceCents !== 999) return error(400, "invalid_course_tier");
+    if (!currentTier.isOneTime || currentTier.monthlyPriceCents !== 999) return invalid("invalid_course_tier");
     if (action !== "created") {
       if (action === "cancelled") await ctx.env.DB.prepare(
         "UPDATE course_access_grants SET revoked_at = ? WHERE provider = 'github-sponsors' AND provider_ref = ? AND revoked_at IS NULL",
@@ -175,7 +176,7 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
 
   let storedTier = currentTier;
   const previousTier = action === "tier_changed" ? parseTier(payload.changes?.tier?.from) : null;
-  if (action === "tier_changed" && !previousTier) return error(400, "bad_sponsorship");
+  if (action === "tier_changed" && !previousTier) return invalid("bad_sponsorship");
   if (existing && (action === "edited" || action === "pending_cancellation" || action === "pending_tier_change")) {
     storedTier = {
       tierId: existing.tierId,
@@ -187,7 +188,7 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
     // During a pending tier change the sponsorship payload can describe the
     // future tier. Until `tier_changed`, the `from` tier remains authoritative.
     const from = parseTier(payload.changes?.tier?.from);
-    if (!from) return error(400, "bad_sponsorship");
+    if (!from) return invalid("bad_sponsorship");
     storedTier = from;
   }
 

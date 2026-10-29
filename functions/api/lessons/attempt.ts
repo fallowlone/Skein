@@ -4,6 +4,7 @@ import { getUserById, termsCurrent } from "../../lib/db";
 import { readBodyBounded } from "../../lib/coach";
 import { answerMatches, loadLesson, parseLessonPath, requiredExercises } from "../../lib/lesson-access";
 import { error, isSameOriginMutation, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const userId = ctx.data.userId;
@@ -13,14 +14,14 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   if (!user || !termsCurrent(user, ctx.env)) return error(403, "terms_required");
 
   const raw = await readBodyBounded(ctx.request, 4 * 1024);
-  if (!raw || raw.byteLength === 0) return error(400, "bad_json");
+  if (!raw || raw.byteLength === 0) return invalid("bad_json");
   let body: any;
   try { body = JSON.parse(new TextDecoder().decode(raw)); }
-  catch { return error(400, "bad_json"); }
+  catch { return invalid("bad_json"); }
   const path = parseLessonPath(body?.path);
   const exerciseId = body?.exerciseId;
   if (!path || typeof exerciseId !== "string" || !exerciseId || exerciseId.length > 128) {
-    return error(400, "bad_attempt");
+    return invalid("bad_attempt");
   }
 
   const result = await loadLesson(ctx.env, path);
@@ -30,7 +31,7 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   try { required = requiredExercises(result.payload.lesson.body.root); }
   catch { return error(502, "invalid_lesson_exercises"); }
   const exercise = required.find((item) => item.id === exerciseId);
-  if (!exercise) return error(400, "unknown_exercise");
+  if (!exercise) return invalid("unknown_exercise");
   if (!answerMatches(exercise, body.answer)) return json({ passed: false, lessonCompleted: false }, 200, { "cache-control": "no-store" });
 
   const key = result.payload.lesson.key;

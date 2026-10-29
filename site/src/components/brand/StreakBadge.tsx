@@ -1,12 +1,13 @@
 import { userState } from "~/scripts/user-state";
 import Icon from "~/components/icons/Icon.tsx";
+import IslandErrorBoundary from "~/components/lesson/IslandErrorBoundary";
 
 // Ambient daily-habit signal. Speaks the rail's line-icon vocabulary (a stroked
 // flame + mono count) rather than a raw emoji, and renders nothing until the
 // learner has a live streak. Self-styled with utilities so it reads the same in
 // the rail and in the lesson topbar. In the rail, the `.rail-streak` slot holds a
 // constant height so this hydrating-in client island never reflows the cluster.
-export default function StreakBadge() {
+function StreakBadgeInner() {
   const { count } = userState.value.progression.streak;
   if (!count) return null;
   const isRu = userState.value.lang === "ru";
@@ -18,5 +19,14 @@ export default function StreakBadge() {
       <span class="sb-num">{count}</span>
       <span class="sb-word">{word}</span>
     </span>
+  );
+}
+
+export default function StreakBadge() {
+  const lang = userState.value.lang === "ru" ? "ru" : "en";
+  return (
+    <IslandErrorBoundary lang={lang}>
+      <StreakBadgeInner />
+    </IslandErrorBoundary>
   );
 }

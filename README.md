@@ -14,9 +14,9 @@ Skein turns a large engineering curriculum into a personal route: it measures wh
 [![Code license](https://img.shields.io/badge/Code-MIT-2563eb?style=for-the-badge)](./LICENSE)
 [![Content license](https://img.shields.io/badge/Content-CC_BY--SA_4.0-64748b?style=for-the-badge)](./LICENSE-CONTENT.md)
 
-[![Astro 6](https://img.shields.io/badge/Astro-6.3-BC52EE?logo=astro&logoColor=white)](https://astro.build)
+[![Astro 7](https://img.shields.io/badge/Astro-7-BC52EE?logo=astro&logoColor=white)](https://astro.build)
 [![Preact](https://img.shields.io/badge/Preact-Islands-673AB8?logo=preact&logoColor=white)](https://preactjs.com)
-[![Bun](https://img.shields.io/badge/Bun-1.3-000?logo=bun&logoColor=white)](https://bun.sh)
+[![Bun](https://img.shields.io/badge/Bun-1.4-000?logo=bun&logoColor=white)](https://bun.sh)
 [![Cloudflare Pages](https://img.shields.io/badge/Cloudflare-Pages-F38020?logo=cloudflare&logoColor=white)](https://pages.cloudflare.com)
 [![Languages](https://img.shields.io/badge/Content-English_+_Russian-0f766e)](#content-model)
 
@@ -49,7 +49,7 @@ Every lesson belongs to a track and unit, teaches explicit concepts, and is conn
 | English lessons | **2,264** |
 | Russian lessons | **2,264** |
 | Concepts in the learning graph | **5,035** |
-| Guided projects | **51** |
+| Guided projects | **54** |
 | Practice sets | **1,540** |
 | Goal profiles | **8** |
 
@@ -167,6 +167,7 @@ flowchart TB
       Pages[Pages: static site]
       Fn[Pages Functions: API]
       D1[(D1: users and progress)]
+      Logs[(D1 app_logs: request logs,<br/>30-day retention)]
       KV[(KV: sessions and limits)]
       R2[(R2: model assets)]
     end
@@ -187,13 +188,14 @@ flowchart TB
     Islands --> WASM
     Islands <--> Fn
     Fn --- D1
+    Fn -.- sampled logs .-> Logs
     Fn --- KV
     Fn --- R2
     Data -. post-deploy content mirror .-> Supabase[(Supabase)]
 
     classDef edge fill:#f38020,color:#111827,stroke:#c45f00;
     classDef build fill:#7c3aed,color:#fff,stroke:#6d28d9;
-    class Pages,Fn,D1,KV,R2 edge;
+    class Pages,Fn,D1,Logs,KV,R2 edge;
     class Generate,LintSrc,Astro,LintDist build;
 ```
 
@@ -212,7 +214,7 @@ flowchart TB
 
 | Layer | Technology |
 |---|---|
-| Site framework | [Astro 6](https://astro.build) with static output and content collections |
+| Site framework | [Astro 7](https://astro.build) with static output and content collections |
 | Interactive UI | [Preact](https://preactjs.com), Signals, Tailwind CSS, GSAP |
 | Authoring | MDX, typed JSON/YAML, custom remark plugins, bilingual glossary |
 | Browser runtimes | [QuickJS](https://github.com/justjake/quickjs-emscripten) for JavaScript and [PGlite](https://pglite.dev) for PostgreSQL/WASM exercises |
@@ -290,7 +292,7 @@ Historical `infographics/`, `assets/exports/`, `drafts/`, and `figma/` directori
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) **1.3.x** (CI currently uses 1.3.11)
+- [Bun](https://bun.sh) **1.4.x** (CI currently uses 1.4.0)
 - Git
 - Optional: Cloudflare credentials and Wrangler access for edge/API development
 
@@ -368,18 +370,15 @@ A pull request is expected to preserve both software correctness and curriculum 
 
 ```mermaid
 flowchart LR
-    PR[Push or pull request] --> Tests[Site and API tests]
-    Tests --> Samples[Runnable samples]
-    Samples --> Scenarios[Debug scenario checks]
-    Scenarios --> Projects[Project workbenches]
-    Projects --> Plan{Build plan}
-    Plan -->|changed pages| Incremental[Incremental render]
-    Plan -->|full baseline| Shards[6 parallel render shards]
-    Incremental --> DistLint[Output lint]
-    Shards --> Merge[Completeness merge]
-    Merge --> DistLint
-    DistLint --> Deploy[Cloudflare Pages]
-    Deploy --> Mirror[Supabase sync and parity check]
+    PR[Push to main] --> Gates[Site + API tests,<br/>typecheck, samples,<br/>scenarios, workbenches]
+    Gates --> Smoke[Playwright smoke,<br/>blocks deploy]
+    Gates --> Content[Content build +<br/>curriculum lint]
+    Smoke --> Deploy
+    Content --> Mirror[Supabase publish + parity]
+    Mirror --> App[App build + output lint]
+    App --> Worker[Lesson worker build]
+    Worker --> Pages[Cloudflare Pages deploy]
+    Nightly((Nightly schedule)) --> Full[Full e2e suite + rebuild]
 ```
 
 The pipeline checks:
@@ -391,9 +390,9 @@ The pipeline checks:
 - executable `run`-tagged code examples under a timeout;
 - project workbenches where broken scaffolds must fail and reference solutions must pass;
 - debug scenarios that must begin with a reproducible defect;
-- final static output integrity before deployment.
+- a Playwright smoke subset that blocks the deploy; the full suite runs nightly.
 
-Full builds are split across six GitHub Actions runners and merged with completeness checks. Incremental builds render only affected pages over the cached deterministic output. A nightly full build protects the cache baseline from drift.
+A nightly scheduled run rebuilds the site and runs the full end-to-end suite.
 
 ---
 
@@ -401,13 +400,13 @@ Full builds are split across six GitHub Actions runners and merged with complete
 
 Production deploys are automated by [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml):
 
-1. run site and Pages Functions gates;
-2. select incremental or full-sharded rendering;
-3. lint the final static output;
-4. deploy `site/dist` to Cloudflare Pages;
-5. synchronize the content mirror to Supabase and verify parity.
+1. run site and Pages Functions gates, plus the Playwright smoke subset;
+2. build and validate curriculum artifacts;
+3. publish the content mirror to Supabase and verify parity;
+4. build the Pages app and lint the final static output;
+5. build the lesson worker and deploy everything to Cloudflare.
 
-The Supabase mirror runs **after** the site deploy by design. A mirror problem can flag the workflow without putting the database on the rendering critical path.
+The Supabase mirror runs **before** the app build by design: runtime lesson routes read the mirror, so it is published and verified before the worker can receive new production traffic. Git remains the source of truth.
 
 Manual root command:
 
@@ -431,7 +430,7 @@ Issues and pull requests are welcome.
 6. Run `bun run build` for content or build-pipeline changes.
 7. Explain learner-facing behavior, trade-offs, and validation in the pull request.
 
-When authoring curriculum, the primary command model is one complete bilingual unit at a time. See [`CLAUDE.md`](./CLAUDE.md) for repository-specific authoring rules and automation details.
+When authoring curriculum, the primary command model is one complete bilingual unit at a time. See [`AGENTS.md`](./AGENTS.md) for repository-specific authoring rules and automation details.
 
 ---
 

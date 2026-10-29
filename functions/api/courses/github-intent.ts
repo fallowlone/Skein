@@ -4,6 +4,7 @@ import { getUserById, termsCurrent } from "../../lib/db";
 import { readBodyBounded, normalizeGithubSponsorsUrl } from "../../lib/coach";
 import { getProduct } from "../../lib/products";
 import { error, isSameOriginMutation, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const userId = ctx.data.userId;
@@ -18,8 +19,8 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   const raw = await readBodyBounded(ctx.request, 1024);
   let track: unknown;
   try { track = JSON.parse(new TextDecoder().decode(raw ?? new Uint8Array())).track; }
-  catch { return error(400, "bad_json"); }
-  if (typeof track !== "string" || !getProduct(`course:${track}`)) return error(400, "invalid_track");
+  catch { return invalid("bad_json"); }
+  if (typeof track !== "string" || !getProduct(`course:${track}`)) return invalid("invalid_track");
 
   const owned = await ctx.env.DB.prepare(
     "SELECT 1 AS owned FROM course_access_grants WHERE user_id = ? AND track = ? AND revoked_at IS NULL LIMIT 1",

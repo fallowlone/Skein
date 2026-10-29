@@ -14,6 +14,7 @@ import {
 import { readBodyBounded } from "../../lib/coach";
 import { getProduct } from "../../lib/products";
 import { error, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 import {
   answerTelegramPreCheckout,
   parseTelegramOrderPayload,
@@ -211,12 +212,12 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   if (!telegramSecretMatches(ctx.request.headers.get("X-Telegram-Bot-Api-Secret-Token"), secret)) return error(401, "bad_secret");
 
   const raw = await readBodyBounded(ctx.request, 64 * 1024);
-  if (!raw || raw.byteLength === 0) return error(400, "bad_json");
+  if (!raw || raw.byteLength === 0) return invalid("bad_json");
   let parsed: unknown;
   try { parsed = JSON.parse(new TextDecoder().decode(raw)); }
-  catch { return error(400, "bad_json"); }
+  catch { return invalid("bad_json"); }
   const update = object(parsed);
-  if (!update) return error(400, "bad_json");
+  if (!update) return invalid("bad_json");
 
   if (update.pre_checkout_query) return handlePreCheckout(ctx.env.DB, token, update.pre_checkout_query);
   if (update.subscription) return handleSubscriptionUpdate(ctx.env.DB, update.subscription);
