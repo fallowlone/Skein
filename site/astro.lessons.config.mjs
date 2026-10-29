@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, sessionDrivers } from "astro/config";
 import cloudflare from "@astrojs/cloudflare";
 import preact from "@astrojs/preact";
+import tailwindcss from "@tailwindcss/vite";
 
 const lessonRoot = fileURLToPath(new URL("./lesson-worker/", import.meta.url));
 const lessonSourceRoot = fileURLToPath(new URL("./lesson-worker/src/", import.meta.url));
@@ -36,6 +37,9 @@ export default defineConfig({
     preact({ compat: false, exclude: [/english\/data\/vocab-b[12]\.ts/] }),
   ],
   vite: {
+    // Same Tailwind v4 plugin as astro.config.mjs: without it the shared
+    // global.css ships with no utilities and islands render unstyled.
+    plugins: [tailwindcss()],
     ssr: { noExternal: ["gsap"] },
     resolve: {
       alias: [

@@ -168,6 +168,13 @@ title: Mapped SVG
       join(siteRoot, "src/components/lesson/LessonRenderTree.astro"), "utf8",
     );
     expect(renderer).toContain('import.meta.glob("../figures/**/*.astro"');
+    // schematic/ has subdirs (net/): a flat glob 200'd an empty body for
+    // networking lessons using NetBarsFig & co.
+    expect(renderer).toContain('import.meta.glob("../schematic/**/*.astro"');
+    // The Worker build must compile Tailwind like the main site, or islands
+    // (RetrievalDrawer) ship without utility classes.
+    const workerConfig = await readFile(join(siteRoot, "astro.lessons.config.mjs"), "utf8");
+    expect(workerConfig).toContain("plugins: [tailwindcss()]");
     // The Astro compiler mangles a frontmatter type literal that names a
     // property `export` (reads it as an ESM export and drops the line tail),
     // which broke the lesson Worker build with esbuild "Unexpected ':'".
