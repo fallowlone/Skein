@@ -2,6 +2,7 @@
 import type { Env, RequestData } from "../lib/types";
 import { getProgress, putProgress, getUserById, termsCurrent } from "../lib/db";
 import { json, error } from "../lib/response";
+import { invalid } from "../lib/validate";
 
 const MAX_BYTES = 256 * 1024; // 256 KB ceiling on a progress blob (measured in UTF-8 bytes)
 
@@ -23,7 +24,7 @@ export const onRequestPut: PagesFunction<Env, any, RequestData> = async (ctx) =>
   // Cap on actual UTF-8 byte size, not UTF-16 code-unit count, so multi-byte
   // payloads can't slip past the ceiling.
   if (new TextEncoder().encode(text).length > MAX_BYTES) return error(413, "too_large");
-  try { JSON.parse(text); } catch { return error(400, "bad_json"); }
+  try { JSON.parse(text); } catch { return invalid("bad_json"); }
   await putProgress(ctx.env.DB, userId, text, Date.now());
   return json({ ok: true });
 };

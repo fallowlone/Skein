@@ -57,6 +57,24 @@ describe("db", () => {
     expect(db.sponsorships.size).toBe(0);
   });
 
+  it("reads users with explicit columns, never SELECT *", async () => {
+    const db = new FakeD1() as any;
+    const stmts: string[] = [];
+    const origPrepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => { stmts.push(sql); return origPrepare(sql); };
+    const u = await upsertUserFromGithub(db, gh);
+    await getUserById(db, u.id);
+    const selects = stmts.filter((s) => s.includes("FROM users"));
+    expect(selects.length).toBeGreaterThan(0);
+    for (const s of selects) expect(s).not.toContain("*");
+    expect(selects).toContain(
+      "SELECT id, github_id, login, nickname, avatar_url, terms_version, terms_accepted_at, created_at FROM users WHERE id = ?",
+    );
+    expect(selects).toContain(
+      "SELECT id, github_id, login, nickname, avatar_url, terms_version, terms_accepted_at, created_at FROM users WHERE github_id = ?",
+    );
+  });
+
   it("validateNickname accepts/rejects", () => {
     expect(validateNickname("ab").ok).toBe(true);
     expect(validateNickname("Cat Master_1.2-3").ok).toBe(true);

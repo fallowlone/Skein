@@ -204,6 +204,10 @@ bunx wrangler d1 execute DB --remote --command "SELECT name FROM sqlite_master W
 bunx wrangler d1 execute DB --remote --command "PRAGMA table_info(payments)"
 ```
 
+Request/auth logs need `functions/migrations/0011_app_logs.sql` applied once —
+retention, sampling, and what-gets-logged-where are documented in
+`docs/operator-observability.md`.
+
 Required Pages secrets:
 
 ```text

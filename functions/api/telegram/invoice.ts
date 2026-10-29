@@ -4,6 +4,7 @@ import { createTelegramOrder, markTelegramOrderFailed, markTelegramOrderInvoiceR
 import { coachConfig, readBodyBounded } from "../../lib/coach";
 import { getProduct } from "../../lib/products";
 import { error, isSameOriginMutation, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 import { callTelegramApi, newTelegramOrderId, normalizeTelegramInvoiceUrl, TELEGRAM_ORDER_TTL_MS } from "../../lib/telegram";
 
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
@@ -16,15 +17,15 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   if (!token || !webhookSecret || !(await telegramSchemaReady(ctx.env.DB))) return error(503, "billing_unavailable");
 
   const raw = await readBodyBounded(ctx.request, 8 * 1024);
-  if (!raw || raw.byteLength === 0) return error(400, "bad_json");
+  if (!raw || raw.byteLength === 0) return invalid("bad_json");
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(raw)); }
-  catch { return error(400, "bad_json"); }
+  catch { return invalid("bad_json"); }
   const requestedProduct = body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>).product
     : null;
   const product = typeof requestedProduct === "string" ? getProduct(requestedProduct) : null;
-  if (!product) return error(400, "invalid_product");
+  if (!product) return invalid("invalid_product");
   if (product.id.startsWith("course:")) {
     let owned;
     try {

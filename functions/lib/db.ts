@@ -12,12 +12,15 @@ export function termsCurrent(u: UserRow, env: Env): boolean {
   return u.terms_accepted_at != null && u.terms_version === env.TERMS_VERSION;
 }
 
+/** Explicit column list: keeps SELECTs in sync with UserRow and migrations. */
+const USER_COLUMNS = "id, github_id, login, nickname, avatar_url, terms_version, terms_accepted_at, created_at";
+
 export async function getUserById(db: D1Database, id: number): Promise<UserRow | null> {
-  return await db.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
+  return await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).bind(id).first<UserRow>();
 }
 
 export async function getUserByGithubId(db: D1Database, githubId: number): Promise<UserRow | null> {
-  return await db.prepare("SELECT * FROM users WHERE github_id = ?").bind(githubId).first<UserRow>();
+  return await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE github_id = ?`).bind(githubId).first<UserRow>();
 }
 
 /** Insert on first sign-in (nickname defaults to login); else refresh login+avatar, keep nickname. */

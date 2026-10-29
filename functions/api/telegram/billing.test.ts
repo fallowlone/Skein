@@ -156,7 +156,7 @@ describe("Telegram invoice creation", () => {
 
   it("rejects unknown products and missing billing configuration", async () => {
     const unknown = await createInvoice({ request: invoiceRequest({ product: "readiness_report" }), env: env(), data: { userId: 42 } } as any);
-    expect(unknown.status).toBe(400);
+    expect(unknown.status).toBe(422);
     const unavailable = await createInvoice({ request: invoiceRequest(), env: env({ TELEGRAM_BOT_TOKEN: "" }), data: { userId: 42 } } as any);
     expect(unavailable.status).toBe(503);
   });
@@ -231,7 +231,7 @@ describe("Telegram webhook", () => {
     const badSecret = await telegramWebhook({ request: webhookRequest({}, "wrong"), env: env(), data: {} } as any);
     expect(badSecret.status).toBe(401);
     const malformed = await telegramWebhook({ request: webhookRequest("{"), env: env(), data: {} } as any);
-    expect(malformed.status).toBe(400);
+    expect(malformed.status).toBe(422);
   });
 
   it("validates and answers the official pre_checkout_query shape", async () => {

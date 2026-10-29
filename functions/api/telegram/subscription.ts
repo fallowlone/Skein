@@ -3,6 +3,7 @@ import type { Env, RequestData } from "../../lib/types";
 import { getTelegramSubscriptionControl, setTelegramSubscriptionRenewalState, telegramSchemaReady } from "../../lib/db";
 import { readBodyBounded } from "../../lib/coach";
 import { error, isSameOriginMutation, json } from "../../lib/response";
+import { invalid } from "../../lib/validate";
 import { callTelegramApi } from "../../lib/telegram";
 
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
@@ -14,14 +15,14 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   if (!token || !webhookSecret || !(await telegramSchemaReady(ctx.env.DB))) return error(503, "billing_unavailable");
 
   const raw = await readBodyBounded(ctx.request, 4 * 1024);
-  if (!raw || raw.byteLength === 0) return error(400, "bad_json");
+  if (!raw || raw.byteLength === 0) return invalid("bad_json");
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(raw)); }
-  catch { return error(400, "bad_json"); }
+  catch { return invalid("bad_json"); }
   const action = body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>).action
     : null;
-  if (action !== "cancel" && action !== "resume") return error(400, "invalid_action");
+  if (action !== "cancel" && action !== "resume") return invalid("invalid_action");
 
   const subscription = await getTelegramSubscriptionControl(ctx.env.DB, userId, Date.now());
   if (!subscription) return error(404, "subscription_not_found");
